@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# bin/test_doctor.py imports bin/doctor.py, which leaves bytecode beside it.
+__pycache__/
 
 # Hand-placed at install time, never in the repo (DEPLOY-CONVENTIONS.md §4).
 secrets/

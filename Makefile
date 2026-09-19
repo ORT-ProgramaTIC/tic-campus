@@ -5,7 +5,7 @@ HOST ?= tic-campus.ort.edu.ar
 SMOKE_BASE ?= http://localhost
 SERVICES ?= api web
 
-.PHONY: help deploy rollout config smoke
+.PHONY: help deploy rollout config smoke doctor
 help:  ## list targets
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*##/\t/' | expand -t22
 
@@ -39,3 +39,10 @@ smoke:  ## through tic-proxy with the real Host header, not around it
 	@curl -fsS -H 'Host: $(HOST)' $(SMOKE_BASE)/ | grep -q 'TIC Campus' \
 	  && echo "ok: / serves the frontend" \
 	  || { echo "FAIL: / did not serve the frontend"; exit 1; }
+
+# This stack's own diagnosis, in tic-host's contract (README, "Doctor"). Plain python3 on
+# the host: the docker socket is what a process inside the containers cannot see.
+# tic-platform's aggregator runs `bin/doctor.py --json` directly rather than through make,
+# because make would print "Entering directory" onto a stream that promises one document.
+doctor:  ## diagnóstico de este stack — [ok]/[warn]/[fail]/[skip], sale 1 si falla platform
+	@python3 bin/doctor.py $(ARGS)
