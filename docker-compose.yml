@@ -1,8 +1,12 @@
 # tic-campus on the ORT VM (tic-platform/PLAN.md §3, M14).
 #
 # `tic-campus-edge` is created by tic-hosting from `[origins.tic-campus]` via
-# `tic apply-config`; compose never creates or deletes it. Names are pinned
-# (DEPLOY-CONVENTIONS.md, "Renaming a compose network").
+# `tic apply-config`; compose never creates or deletes it. `tic-db` is
+# /opt/tic-platform's, `internal: true` — no gateway, no published port. Names
+# are pinned (DEPLOY-CONVENTIONS.md, "Renaming a compose network").
+#
+# There is no `depends_on` for the database: it is another stack's container, so
+# compose cannot express the dependency. The Makefile checks it before rolling.
 name: tic-campus
 
 services:
@@ -11,7 +15,20 @@ services:
     container_name: tic-campus-api
     restart: unless-stopped
     expose: ["3000"]
-    networks: [tic-campus-edge]
+    # Compose reads `.env` on the HOST at parse time and fails if it is absent,
+    # so `make config` needs it too. It is not the `/etc/<stack>.env` shape
+    # tic-hosting uses: there is nothing to `source` (DEPLOY-CONVENTIONS.md §4).
+    env_file: [.env]
+    # `campus_svc`'s password, mounted as a file rather than passed as an
+    # environment variable, so it never appears in `docker inspect`.
+    # `DATABASE_PASSWORD_FILE` in `.env` must name this exact target — rename
+    # one side only and the container refuses to boot with ENOENT.
+    secrets:
+      - source: db_svc_password
+        target: /run/secrets/db_svc_password
+    # `tic-db` for the database; the edge network is how tic-proxy reaches the
+    # stack. `web` stays off `tic-db`: nginx has no business there.
+    networks: [tic-campus-edge, tic-db]
     healthcheck:
       test:
         [
@@ -41,3 +58,12 @@ services:
 networks:
   tic-campus-edge:
     external: true
+  tic-db:
+    external: true
+
+# `secrets/db_owner_password` is deliberately NOT here: migrations run on the
+# host as `campus_owner` and that file never enters a container, so mounting it
+# would widen its reach for nothing.
+secrets:
+  db_svc_password:
+    file: ./secrets/db_svc_password

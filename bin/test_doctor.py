@@ -122,6 +122,21 @@ class TestChecks(unittest.TestCase):
         # The SPA shell on a 200 is the api location falling through to try_files.
         self.assertEqual(proxy(Completed(0, "<!doctype html>", "")), ["fail"])
 
+    def test_db_reachable_reads_the_apis_own_readiness(self) -> None:
+        def readyz(done: Completed) -> list[str]:
+            run = _box({"docker exec tic-campus-api node": done})
+            return _severities(doctor.check_db_reachable(Ctx(run=run, root=doctor.ROOT)))
+
+        self.assertEqual(readyz(Completed(0, '{"status":"ok","db":"directory.subject: 12"}', "")), ["ok"])
+        # 503: the process answers, the database does not — which is the case a
+        # liveness healthcheck reports as healthy.
+        self.assertEqual(
+            readyz(Completed(1, '{"status":"error","db":"password authentication failed"}', "")),
+            ["fail"],
+        )
+        # The api is up but /api/readyz is not routed: a 404 body carries no "ok".
+        self.assertEqual(readyz(Completed(0, "Not Found", "")), ["fail"])
+
 
 if __name__ == "__main__":
     unittest.main()

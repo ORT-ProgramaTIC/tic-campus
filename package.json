@@ -6,7 +6,8 @@
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "test": "pnpm -r test"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

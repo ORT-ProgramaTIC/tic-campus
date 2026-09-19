@@ -51,6 +51,7 @@ STACK_SCOPE: Scope = "platform"
 # Resolved from this file, never the cwd: tic-platform runs this from its own directory.
 ROOT = Path(__file__).resolve().parents[1]
 WEB = "tic-campus-web"
+API = "tic-campus-api"
 
 _CONTAINER_NAME = re.compile(r"^\s*container_name:\s*(\S+)\s*$", re.M)
 
@@ -382,6 +383,39 @@ def check_web_api_proxy(ctx: Ctx) -> list[Finding]:
     ]
 
 
+def check_db_reachable(ctx: Ctx) -> list[Finding]:
+    """`/api/readyz` asked from inside tic-campus-api: does this process reach tic-db as
+    `campus_svc` and read `directory.*`? The liveness healthcheck deliberately says nothing
+    about the database — restarting the container does not fix a database that is down — so
+    a stack whose every container is healthy can still serve nothing. Asked *inside* the api
+    rather than through nginx so a failure here is never the proxy hop, which is the check
+    above."""
+    subject = Subject.container(API)
+    # node:24-slim carries no curl and no wget; global fetch is in the image already.
+    done = ctx.in_container(
+        API,
+        "node",
+        "-e",
+        "fetch('http://127.0.0.1:3000/api/readyz')"
+        ".then(async r=>{console.log(await r.text());process.exit(r.ok?0:1)})"
+        ".catch(e=>{console.log(String(e));process.exit(1)})",
+    )
+    if done.rc == 0 and '"ok"' in done.out:
+        return [ok("tic-campus-api llega a tic-db como campus_svc", subject=subject)]
+    detail = _first_line(done.out) or _first_line(done.err) or f"node salió {done.rc}"
+    return [
+        fail(
+            f"tic-campus-api no llegó a la base ({detail}), así que el stack está arriba y "
+            "no puede contestar nada que dependa de datos",
+            remedy=(
+                "revisá que tic-db esté healthy, que .env apunte a campus_svc y que "
+                "secrets/db_svc_password tenga su contraseña; docker logs tic-campus-api"
+            ),
+            subject=subject,
+        )
+    ]
+
+
 CheckFn = Callable[[Ctx], "list[Finding]"]
 
 
@@ -396,6 +430,7 @@ class Check:
 CHECKS: list[Check] = [
     Check("containers-settled", "estado de los containers del stack", check_containers_settled),
     Check("web-api-proxy", "proxy /api/ de tic-campus-web", check_web_api_proxy),
+    Check("db-reachable", "acceso de la api a tic-db", check_db_reachable),
 ]
 
 assert len({check.id for check in CHECKS}) == len(CHECKS), "duplicate check id in CHECKS"
