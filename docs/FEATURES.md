@@ -402,3 +402,96 @@ re-argued per item):
   still follows the library (F8), so fixes reach past years too.
   **The lock is automatic on a configured date**, 31 December by default. An admin can
   move that date or unlock a single offering for a late grade fix.
+
+---
+
+## Group J — Data model
+
+The `campus` schema, owned by `campus_owner`, written by migrations run as the owner and
+read at runtime by `campus_svc` (F31). Reads of people, courses, subjects and offerings go
+to `directory.*`; foreign keys point at `public."user"`, `public.course`, `public.offering`
+and `public.subject`, the four tables tic-auth's `REFERENCEABLE_TABLES` grants campus
+`REFERENCES` on. `REFERENCES` does not imply `SELECT`: a constraint naming `public.*` and a
+query naming `directory.*` are two different privileges, and mixing them up produces a
+permission error blaming the wrong half (`MEV/api/src/db/schema/directory.ts` is the
+worked example).
+
+### F36 · Keys and conventions
+- [x] **Status:** decided
+- **Decision:** `uuid` primary keys with `defaultRandom()`, as in MEV: ids can be minted in
+  tests and client-side, and they leak no counts. Directory ids stay `integer`, because they
+  are tic-auth's. Timestamps are `timestamptz`. Retirement is `archived_at timestamptz`
+  rather than a status column, so *when* something was retired survives.
+
+### F37 · The tables
+- [x] **Status:** decided
+- **Decision:** Thirteen tables, plus the four F39 names (`offering_group`,
+  `offering_term`, `offering_scale`, `offering_scale_level`).
+
+  | Table | Holds | Key references |
+  |---|---|---|
+  | `article` | library article: subject, slug, title, `published_version_id`, `draft_version_id`, `archived_at` (F7, F8, F11) | → `public.subject` |
+  | `article_version` | one saved body: Markdown source, author, created_at (F11) | → `article`, `public."user"` |
+  | `program_unit` | the subject's program: title, Markdown contents, position (F15) | → `public.subject` |
+  | `offering_home` | activation, section list and order, links list, slug fallback (F14, F34) | → `public.offering` |
+  | `offering_unit` | the offering's copy of the program units: title, position, `hidden` (F13, F15) | → `offering_home`, `program_unit` (nullable) |
+  | `offering_article` | an offering's **use** of an article: unit, position, publish date, visibility (F4), and the grading fields when it is an activity (F18) | → `offering_home`, `article`, `offering_unit`, `offering_group`, `offering_term` |
+  | `redo_covers` | which uses a redo covers (F23) | → `offering_article` ×2 |
+  | `result` | one student's result for one activity (F38) | → `public."user"`, `offering_article` |
+  | `official_grade` | hand-entered term grade: value, observation, suggestion (F22) | → `public."user"`, `offering_term` |
+  | `revision_request` | reason, bonus tasks, teacher answer, resolved (F29) | → `result`, `public."user"` |
+  | `notification` | user, kind, target, `read_at` (F30) | → `public."user"` |
+  | `upload` | id, subject, uploader, filename, media type, size, sha256 (F9) | → `public.subject`, `public."user"` |
+  | `audit_event` | append-only: actor, action, target, before/after (F41) | → `public."user"` |
+
+  The bytes of an upload live on the volume at a path derived from the id; the row is the
+  index, which is what makes listing, quotas and garbage collection possible. Serving a file
+  checks the visibility of the articles that reference it.
+
+### F38 · A result is a record of what a student did
+- [x] **Status:** decided
+- **Decision:** `result` is `(student_id, offering_article_id, value, scale_level,
+  feedback, recorded_by, recorded_at)`, unique on the first two. **It carries no course**:
+  a result records that this person did this activity and got this, and a student who later
+  changes course does not change that fact. The absence is a feature, not a gap — there is
+  no composite key to maintain and no history to rewrite when a roster does.
+  The API checks `directory.enrollment` when a result is *created*; a later unenrollment
+  leaves the result standing, and the gradebook shows it as a student no longer in the
+  offering rather than hiding it.
+  **One numeric `value` column** is what the formula aggregates: done = 1, not done = 0, a
+  scale level = its mapped number. `scale_level` keeps what the teacher actually picked, for
+  display. A single aggregatable column is what keeps the evaluator from branching per type.
+
+### F39 · Groups, terms and scales are rows
+- [x] **Status:** decided
+- **Decision:** `offering_group` (F20), `offering_term` (F21) and `offering_scale` +
+  `offering_scale_level` (F19) are tables per offering, each with a name and a position, and
+  an activity references them by id. Renaming a group then touches neither the activities nor
+  the formula. Scales can also be seeded from global presets, which live in code rather than
+  in a settings table.
+
+### F40 · Formulas are text, validated on save
+- [x] **Status:** decided
+- **Decision:** `offering_term.formula` and `offering_home.final_formula` hold the source
+  text. Saving parses it and rejects unknown functions or groups; the evaluator re-parses on
+  read, which costs microseconds. No compiled AST column, because a cache of a parse is a
+  second thing that can disagree with the text.
+  **Computed marks are never stored** (F20): they are derived on read from published results
+  (F24). Nothing to invalidate when a result, a formula or a publish changes.
+
+### F41 · Campus keeps its own audit log
+- [x] **Status:** decided
+- **Decision:** An append-only `campus.audit_event` records who changed a result or an
+  official grade, who published an activity, and who activated, locked or unlocked an
+  offering. Grades get contested, so *"who set this to 4, and when"* has to be answerable;
+  article history (F11) already answers it for content. Append-only **by grant**, the way
+  tic-auth's own audit table is: `campus_svc` gets `SELECT, INSERT` and nothing else.
+  Writing to tic-auth's `public.audit_event` is not an option — campus holds no privilege
+  on it.
+
+### F42 · Admin-level values live in code, not a settings table
+- [x] **Status:** decided
+- **Decision:** The year-lock date (F35) and the global scale presets (F19) are constants in
+  the api, overridable by environment where the box needs it. A settings table for two
+  values would be a screen, a migration and a cache for something that changes once a year.
+
