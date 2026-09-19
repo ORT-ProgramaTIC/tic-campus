@@ -356,8 +356,12 @@ re-argued per item):
 - [x] **Status:** building
 - **Prior art:** `tic-platform/README.md` (topology), `../DEPLOY-CONVENTIONS.md`,
   `bin/doctor.py` (already in this repo).
-- **Decision:** Only `tic-campus-api` joins `tic-db`, as `campus_svc`, and the `campus`
-  schema is owned by `campus_owner`. The doctor contract is `schema_version: 2`. Backups are
+- **Decision:** Only `tic-campus-api` joins `tic-db`. Three role names, and they are not
+  interchangeable (tic-auth `0005`): the schema `campus` is owned by the role **`campus`**,
+  migrations run as it; **`campus_app`** is the NOLOGIN runtime group holding the
+  `directory.*` grants; **`campus_svc`** is the LOGIN role the container connects as, a
+  member of `campus_app`, created by hand at deploy with a password and a connection
+  ceiling of 15 (`tic-platform/bin/limits.sh`). The doctor contract is `schema_version: 2`. Backups are
   tic-platform's nightly dump, plus the uploads volume (F9). Deploy is `make deploy` from `/opt/tic-campus`.
 
 ---
@@ -407,8 +411,9 @@ re-argued per item):
 
 ## Group J — Data model
 
-The `campus` schema, owned by `campus_owner`, written by migrations run as the owner and
-read at runtime by `campus_svc` (F31). Reads of people, courses, subjects and offerings go
+The `campus` schema, owned by the role `campus`, written by migrations run as that owner
+and read at runtime by `campus_svc` through `campus_app` (F31). Reads of people, courses,
+subjects and offerings go
 to `directory.*`; foreign keys point at `public."user"`, `public.course`, `public.offering`
 and `public.subject`, the four tables tic-auth's `REFERENCEABLE_TABLES` grants campus
 `REFERENCES` on. `REFERENCES` does not imply `SELECT`: a constraint naming `public.*` and a
