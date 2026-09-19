@@ -1,0 +1,11 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "module": "es2022",
+    "moduleResolution": "bundler",
+    "lib": ["es2023", "dom"],
+    "types": []
+  }
+}

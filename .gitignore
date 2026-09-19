@@ -1,0 +1,6 @@
+node_modules/
+dist/
+
+# Hand-placed at install time, never in the repo (DEPLOY-CONVENTIONS.md §4).
+secrets/
+.env

@@ -1,0 +1,10 @@
+{
+  "name": "tic-campus-api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/index.js"
+  }
+}

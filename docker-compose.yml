@@ -1,0 +1,43 @@
+# tic-campus on the ORT VM (tic-platform/PLAN.md §3, M14).
+#
+# `tic-campus-edge` is created by tic-hosting from `[origins.tic-campus]` via
+# `tic apply-config`; compose never creates or deletes it. Names are pinned
+# (DEPLOY-CONVENTIONS.md, "Renaming a compose network").
+name: tic-campus
+
+services:
+  api:
+    build: { context: ., dockerfile: docker/api/Dockerfile }
+    container_name: tic-campus-api
+    restart: unless-stopped
+    expose: ["3000"]
+    networks: [tic-campus-edge]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging: { driver: json-file, options: { max-size: 10m, max-file: "3" } }
+
+  web:
+    build: { context: ., dockerfile: docker/web/Dockerfile }
+    container_name: tic-campus-web
+    restart: unless-stopped
+    expose: ["80"]
+    networks: [tic-campus-edge]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging: { driver: json-file, options: { max-size: 10m, max-file: "3" } }
+
+networks:
+  tic-campus-edge:
+    external: true
