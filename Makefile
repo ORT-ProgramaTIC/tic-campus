@@ -53,11 +53,17 @@ rollout:  ## the half of `deploy` after the pull — not called directly
 	@test -r .env || { \
 	  echo "FAIL: cannot read .env — compose reads it at parse time and every target needs it."; \
 	  echo "      Copy .env.example to .env (root:root 0600) and fill it in."; exit 1; }
+	@# `-s` and not `-r`: the install step creates these EMPTY (`install /dev/null`)
+	@# and then fills them, and a command whose output was redirected here can
+	@# leave one empty too — `issue-secret` run in the wrong directory writes
+	@# nothing to stdout while its error goes to /dev/null. An empty file passes
+	@# `-r`, so the api boots, refuses its own config and crash-loops, and the
+	@# only thing that says why is the container's log.
 	@for f in $(MOUNTED_SECRETS); do \
-	  test -r "$$f" || { \
-	    echo "FAIL: cannot read $$f — tic-campus-api mounts it and refuses to boot without it."; \
-	    echo "      Create it with \`install -m 0600 -o root -g root /dev/null $$f\` and paste the credential."; \
-	    echo "      campus_svc's password, or tic-auth's client secret — README, 'El login'."; exit 1; }; \
+	  test -s "$$f" || { \
+	    echo "FAIL: $$f no existe o está vacío — tic-campus-api lo monta y no arranca sin él."; \
+	    echo "      Crealo con \`install -m 0600 -o root -g root /dev/null $$f\` y pegá la credencial:"; \
+	    echo "      la contraseña de campus_svc, o el secreto de cliente de tic-auth — README, 'El login'."; exit 1; }; \
 	done
 	docker compose build
 	docker compose up -d
