@@ -1,4 +1,10 @@
-import { integer, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import {
+  integer,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
 import { campus } from "./_schema.js";
 import { directoryOfferingTable, directoryUserTable } from "./directory.js";
 
@@ -14,11 +20,12 @@ import { directoryOfferingTable, directoryUserTable } from "./directory.js";
  * has not written yet. So an admin says which offerings are ours, and campus's
  * every public read joins through here.
  *
- * **It carries the activation and the offering's articles.** F37 also describes
- * a section list and order, a links list and a slug fallback: the sections and
- * the links are F14's and still have no reader, and the slug fallback is F32's
- * answer to a collision that does not exist. Each arrives with the feature that
- * reads it, in its own migration.
+ * **It carries the activation, the offering's articles and the final formula.**
+ * F37 also describes a section list and order, a links list and a slug
+ * fallback: the sections and the links are F14's and still have no reader, and
+ * the slug fallback is F32's answer to a collision that does not exist. Each
+ * arrives with the feature that reads it, in its own migration — which is how
+ * `finalFormula` arrived with slice 8.
  *
  * **Deactivation is `archivedAt`, not a `DELETE`** (F36), since slice 5 —
  * `offering_article` now hangs off this id, and F37 hangs `result` off that and
@@ -48,6 +55,17 @@ export const offeringHome = campus.table(
     /** Deactivated, keeping what is under it (F36). Every public read filters
      *  on this being null; the row stays so an admin can undo it. */
     archivedAt: timestamp("archived_at", { withTimezone: true }),
+    /**
+     * The offering's final mark, as **source text** (F40, F21) — a *second*
+     * formula, over the **term** names rather than the group names, because the
+     * final is computed from the term results and not from the activities
+     * again. `avg("1er trimestre", "2do trimestre", "3er trimestre")`.
+     *
+     * It lives here rather than on a row of its own for the reason it is saved
+     * in the gradebook's one body: an offering has exactly one, and the save
+     * that renames a term has to be able to fix it in the same statement.
+     */
+    finalFormula: text("final_formula"),
   },
   // Total, never partial: `ON CONFLICT (offering_id)` needs this as its target,
   // and a `WHERE archived_at IS NULL` index is not one.

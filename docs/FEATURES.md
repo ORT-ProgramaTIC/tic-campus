@@ -502,7 +502,7 @@ directly. See F15 for why there is no per-offering copy of the units yet.
 
 ### F20 · The mark formula
 
-- [x] **Status:** decided
+- [x] **Status:** built (slice 8)
 - **Decision:** Each offering has a formula over **named groups**, built from aggregate
   helpers: `avg`, `done_ratio`, `drop_lowest`, `min`, `max`, `round`, `if`. For example
   `0.7*avg(tps) + 0.3*10*done_ratio(clase)`. Formulas cannot reference individual
@@ -526,9 +526,44 @@ directly. See F15 for why there is no per-offering copy of the units yet.
   Also worth knowing before writing the evaluator: **a blank is an absent
   `result` row and nothing else** (F38), so there is exactly one shape to skip.
 
+  **Built 2026-09-20 (slice 8).** `api/src/offerings/formula.ts` is a tokenizer and a
+  recursive-descent parser, `api/src/offerings/marks.ts` is what feeds it rows. Seven
+  functions as decided, `+ - * /`, unary minus, parentheses and the six comparisons, which
+  exist for `if` and deliberately do not chain. Five things settled by building it:
+
+  - **A name is a call only when a parenthesis follows it**, so there are no reserved words
+    and a teacher may name a group `min`. One rule instead of two, and no escape hatch to
+    document.
+  - **A group name may be quoted**, `avg("Trabajos Prácticos")`, because a name is free text
+    up to 80 characters and a bare identifier cannot hold a space. An unquoted name allows
+    Unicode letters, so `avg(física)` needs no quotes. This is what made F39's answer
+    possible without a key column — see there.
+  - **`avg`, `min`, `max` and `drop_lowest` pool every argument** into one list of numbers, a
+    group contributing its marks and a number itself. That is one rule rather than two, and
+    it is what lets the **final formula use the same evaluator** (F21): `avg(tps)` and
+    `avg("1er", "2do")` are the same function. A `null` argument is dropped, which is this
+    item's blank rule applied one level up — a term nobody has marked does not drag the final
+    down, the way an unmarked TP does not drag a term down. Spelling it `(a+b+c)/3` instead
+    deliberately gives _sin nota_, because plain arithmetic propagates it.
+  - **Three outcomes, never `NaN` and never `Infinity`**: a number, `null` for _sin nota_, or
+    an error string the teacher reads in the cell. Division by zero is an **error and not a
+    `null`** — a null reads as "todavía no hay nota" and would hide a formula somebody has to
+    go fix. A formula that no longer parses is a cell with a message rather than a failed
+    request, so the grid still renders around the term that broke.
+  - **Every number the evaluator produces is rounded to ten decimals.** Not cosmetic:
+    `0.7*7 + 0.3*10` is `7.899999999999999` in binary floating point, which prints as that on
+    a boletín and loses an `if(x >= 7.9, …)` a teacher wrote. Marks are 1–10 with two
+    decimals, so ten decimals is far below anything real.
+
+  `done_ratio` is the one function that takes a group and not a pooled list, because its
+  denominator is the group's `done` **activities** — which is why the evaluator reads the
+  activity list and not only the `result` rows, and why `listActivities` is now exported. It
+  is therefore unusable in the final formula, where a name is a term's own mark and there is
+  no activity list behind it; the error says so.
+
 ### F21 · Terms and the final
 
-- [x] **Status:** built (slice 7), except the dates and the formula
+- [x] **Status:** built (slice 7), except the dates; the formula is slice 8's
 - **Decision:** Every activity belongs to a term. The formula (F20) runs per term, and the
   final is a second formula over the term results. **Terms are defined per offering**: the
   teacher names them (and optionally dates them). That gives up comparing marks across
@@ -541,6 +576,16 @@ directly. See F15 for why there is no per-offering copy of the units yet.
   `formula`**: the optional dates have no reader until F16's calendar and the
   formula is F40's, and a column arrives with the feature that reads it. The
   final, being a second formula over the term results, is all F20's.
+
+  **The formula arrived 2026-09-20 (slice 8); the dates did not**, and they still have no
+  reader. The final is built as decided — a second formula, whose names are the **terms**
+  rather than the groups, each resolving to the mark just computed for it. Two things fell
+  out of building it. A term with **no formula still contributes its name** to the final's
+  scope, as _sin nota_: skipping it made the final read `«3er trimestre» ya no existe` for
+  a teacher who wrote the final before the last term's formula, which is a refusal where a
+  partial mark was the honest answer. And `offering_home.final_formula` is written by the
+  **gradebook's own `PUT`** rather than a route of its own, because the save that renames a
+  term has to be able to fix it in the same body (F39).
 
 ### F22 · Official term grade
 
@@ -558,7 +603,7 @@ directly. See F15 for why there is no per-offering copy of the units yet.
 
 ### F24 · Publishing and what students see
 
-- [x] **Status:** built (slice 7), except the computed mark
+- [x] **Status:** built (slice 7); the computed mark is slice 8's
 - **Decision:** Results are hidden until the teacher publishes the activity for the class,
   which replaces the per-row `Visible` column. Students see their published results, the
   feedback text on each, and their live computed mark.
@@ -584,6 +629,14 @@ directly. See F15 for why there is no per-offering copy of the units yet.
     visibility is **not** consulted: a teacher who unpublishes a statement in
     October has not asked to take back the marks they published in September,
     and a student watching them vanish could not tell that from a mistake.
+
+  **The computed mark arrived 2026-09-20 (slice 8)**, and `resultsVisible` got its first
+  caller — it had none until now, since `myResults` carried the same rule in its `where`.
+  The teacher's grid returns **both numbers per student per term**, `all` and `published`,
+  from one evaluator called twice with different **activity lists**. Filtering the activity
+  list and not merely the results is the load-bearing half: an unpublished activity left in
+  would sit in `done_ratio`'s denominator (F20) and tell the student it is there, which is
+  the same leak this item forbids, arriving by arithmetic instead of by a row.
 
 ### F25 · Due dates and grading
 
@@ -787,11 +840,11 @@ worked example).
   | `article`          | library article: subject, slug, title, `published_version_id`, `draft_version_id`, `archived_at` (F7, F8, F11)                                                                                                                                                        | → `public.subject`                                                                                     |
   | `article_version`  | one saved body: Markdown source, author, created_at (F11)                                                                                                                                                                                                             | → `article`, `public."user"`                                                                           |
   | `program_unit`     | the subject's program: title, Markdown contents, position (F15)                                                                                                                                                                                                       | → `public.subject`                                                                                     |
-  | `offering_home`    | **built (slice 4)** — activation and `archived_at` (F36); the section list, the links and the slug fallback arrive with F14 and F32                                                                                                                                   | → `public.offering`                                                                                    |
+  | `offering_home`    | **built (slice 4)**, `final_formula` **slice 8** — activation, `archived_at` (F36) and the offering's final formula (F21, F40); the section list, the links and the slug fallback arrive with F14 and F32                                                             | → `public.offering`                                                                                    |
   | `offering_unit`    | the offering's copy of the program units: title, position, `hidden` — **deferred to F14**, see F15 (F13, F15)                                                                                                                                                         | → `offering_home`, `program_unit` (nullable)                                                           |
   | `offering_article` | **built (slice 5)**, grading fields **slice 7** — an offering's **use** of an article: unit, position, publish date, visibility (F4), and F18's group, term, value type, scale, due date and `results_published_at`. `offering_unit_id` still waits for F14 (see F15) | → `offering_home`, `article`, `program_unit`; later `offering_unit`, `offering_group`, `offering_term` |
   | `offering_group`   | **built (slice 7)** — a teacher-named bucket: name, position (F20, F39)                                                                                                                                                                                               | → `offering_home`                                                                                      |
-  | `offering_term`    | **built (slice 7)** — a term of this offering: name, position; the dates and `formula` arrive with F16 and F40 (F21, F39)                                                                                                                                             | → `offering_home`                                                                                      |
+  | `offering_term`    | **built (slice 7)**, `formula` **slice 8** — a term of this offering: name, position, mark formula as source text; the optional dates arrive with F16 (F21, F39, F40)                                                                                                 | → `offering_home`                                                                                      |
   | `offering_scale`   | **built (slice 7)** — a named ordered scale, plus `offering_scale_level` (name, number, position) (F19, F39)                                                                                                                                                          | → `offering_home`                                                                                      |
   | `redo_covers`      | which uses a redo covers (F23)                                                                                                                                                                                                                                        | → `offering_article` ×2                                                                                |
   | `result`           | **built (slice 7)** — one student's result for one activity (F38)                                                                                                                                                                                                     | → `public."user"`, `offering_article`                                                                  |
@@ -870,6 +923,27 @@ feedback, recorded_by, recorded_at)`, unique on the first two. **It carries no c
   the offering's formula text. It is written down here so that slice decides it
   rather than discovering it.
 
+  **Settled 2026-09-20 (slice 8): a formula names the group, and a rename that would
+  orphan one is refused.** Neither way out written down above was taken, because of a third
+  fact neither accounted for: **a group's name is free text up to 80 characters**, so
+  `Trabajos Prácticos` is legal and is not spellable as a bare identifier _either way_. A
+  `key` column does not remove that problem, it adds a second name — and after one rename
+  the formula says `trabajos_practicos` while the screen says something else, which is
+  exactly the drift that makes a wrong number hard to see. So the parser learned to quote a
+  name instead (F20), and `writeSetup` re-validates every formula of the offering against
+  the names it just wrote, inside the transaction and by re-reading rather than trusting the
+  payload.
+
+  The cost is a `409 group_renamed_in_use`, and it is cheap to avoid because **the names and
+  the formulas travel in one body**: one save renames the group and fixes the formula
+  together. It is the answer `duplicate_name` already gives, and the one the deletes give —
+  `deleteGroup` and `deleteTerm` now also refuse a row a formula names, under the codes they
+  already use, because "something still points at this" is the same fact and a client
+  branches on it the same way.
+
+  So the sentence struck through above can be restated whole: **renaming a group touches the
+  activities not, and the formula only in the same save.**
+
   Two more things settled by building it:
 
   - **`name` is unique per offering, and that is the database's job.** Two
@@ -887,13 +961,31 @@ duplicate_name` telling the teacher to save it in two steps, rather than a
 
 ### F40 · Formulas are text, validated on save
 
-- [x] **Status:** decided
+- [x] **Status:** built (slice 8)
 - **Decision:** `offering_term.formula` and `offering_home.final_formula` hold the source
   text. Saving parses it and rejects unknown functions or groups; the evaluator re-parses on
   read, which costs microseconds. No compiled AST column, because a cache of a parse is a
   second thing that can disagree with the text.
   **Computed marks are never stored** (F20): they are derived on read from published results
   (F24). Nothing to invalidate when a result, a formula or a publish changes.
+
+  **Built 2026-09-20 (slice 8)**, both columns, in `0006_the_formula_text` — two nullable
+  `text`s and no backfill. Held as decided, including the parts that were tempting:
+
+  - **No compiled AST column, and no computed mark anywhere.** A `db.test.mjs` subtest asserts
+    that `campus` has no column whose name contains `mark`, so the temptation fails a test
+    rather than a review.
+  - **The validation runs inside the save's transaction and re-reads**, rather than checking
+    the payload. The whole-list save never deletes, so a term the body left out keeps its
+    formula and a group the body left out keeps its name — only the database knows the state
+    a rename actually produced. A refusal rolls the whole save back.
+  - **A formula is `undefined` to leave alone and `null` to clear**, F15's no-delete-by-
+    omission rule extended to a column: a client that does not know about formulas must not
+    wipe one by saving the panel it does know about. An empty string is stored as `null`,
+    because `""` would be a third state that parses as an error forever.
+  - Parsing happens once per formula per request and is evaluated N times. That is a local
+    variable, not the cache this item refuses: nothing outlives the request, so nothing can
+    disagree with the text it came from.
 
 ### F41 · Campus keeps its own audit log
 

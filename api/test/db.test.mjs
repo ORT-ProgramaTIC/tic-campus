@@ -40,9 +40,15 @@ import {
 } from "../dist/offerings/gradebook.js";
 import {
   gradebook,
+  listActivities,
   myResults,
   saveResults,
 } from "../dist/offerings/results.js";
+import {
+  computeBothViews,
+  computeMarks,
+  publishedOnly,
+} from "../dist/offerings/marks.js";
 import {
   listUploads,
   pathFor,
@@ -1222,6 +1228,258 @@ test(
           (r) => r.studentId === ids.teacher,
         ).value,
         8,
+      );
+    });
+
+    // --- slice 8: a mark is computed (F20, F40) ------------------------------
+    //
+    // The group here is called `trabajos prácticos` by now, renamed by the
+    // first subtest of slice 7 — a space and an accent, which is exactly the
+    // name F39's settled answer has to survive, and the reason a formula can
+    // quote a name instead of carrying a key column for it.
+    //
+    // Still ordered before the deactivation below. The roster is already down
+    // to one enrolled student, because the subtest above un-enrolled the other.
+
+    await t.test(
+      "a formula is text on the term, and it survives a save",
+      async () => {
+        const { home, setup } = await setupNow();
+        const written = await writeSetup(db, home.homeId, {
+          groups: [],
+          terms: [
+            {
+              id: setup.terms[0].id,
+              name: setup.terms[0].name,
+              formula: 'avg("trabajos prácticos")',
+            },
+          ],
+          scales: [],
+          finalFormula: 'round(avg("Primer trimestre"), 2)',
+        });
+        assert.equal(written.terms[0].formula, 'avg("trabajos prácticos")');
+        assert.equal(written.finalFormula, 'round(avg("Primer trimestre"), 2)');
+
+        // The whole-list save never deletes, and a formula is no exception: a
+        // client that does not know about formulas must not wipe one by saving
+        // the panel it does know about.
+        const after = await writeSetup(db, home.homeId, {
+          groups: [],
+          terms: [{ id: setup.terms[0].id, name: setup.terms[0].name }],
+          scales: [],
+        });
+        assert.equal(after.terms[0].formula, 'avg("trabajos prácticos")');
+        assert.equal(after.finalFormula, 'round(avg("Primer trimestre"), 2)');
+      },
+    );
+
+    await t.test("the grid computes a mark, and two of them", async () => {
+      const { home, setup } = await setupNow();
+      const grid = await gradebook(db, home.homeId, ids.current);
+      const [student] = computeBothViews(setup, grid.activities, grid.results, [
+        ids.student,
+      ]);
+      // `numeric` mode again, one level up: a string 9 would make this "99".
+      assert.equal(student.terms[setup.terms[0].id].all.value, 9);
+      assert.equal(student.final.all.value, 9);
+
+      // Nothing was stored (F40). The mark is gone the moment nobody computes
+      // it, which is what keeps a publish from having to invalidate anything.
+      const columns = await svc.query(
+        `select column_name from information_schema.columns
+         where table_schema = 'campus' and column_name like '%mark%'`,
+      );
+      assert.deepEqual(columns.rows, [], "no hay columna de nota calculada");
+    });
+
+    await t.test(
+      "the student's mark counts published activities only",
+      async () => {
+        const { home, setup } = await setupNow();
+        const tp = (
+          await gradebook(db, home.homeId, ids.current)
+        ).activities.find((a) => a.slug === "tp-sql");
+        const publish = (resultsPublishedAt) =>
+          useArticle(db, home.homeId, ids.subject, tp.articleId, {
+            programUnitId: null,
+            position: 0,
+            publishedAt: PUBLISHED,
+            restricted: false,
+            ...NOT_GRADED,
+            offeringGroupId: setup.groups[0].id,
+            offeringTermId: setup.terms[0].id,
+            valueType: "numeric",
+            dueAt: PUBLISHED,
+            resultsPublishedAt,
+          });
+
+        await publish(null);
+        const grid = await gradebook(db, home.homeId, ids.current);
+        const [student] = computeBothViews(
+          setup,
+          grid.activities,
+          grid.results,
+          [ids.student],
+        );
+        // The leak this prevents: one evaluator over one activity list would show
+        // the student a mark for a TP whose results are not out yet.
+        assert.equal(student.terms[setup.terms[0].id].all.value, 9);
+        assert.deepEqual(student.terms[setup.terms[0].id].published, {
+          value: null,
+        });
+
+        // And the student's own page agrees, because it is the same evaluator
+        // over the same filter rather than a second rule.
+        const activities = await listActivities(db, home.homeId);
+        assert.deepEqual(publishedOnly(activities), []);
+
+        await publish(PUBLISHED);
+        const mine = await myResults(db, home.homeId, ids.student);
+        const computed = computeMarks(
+          setup,
+          publishedOnly(await listActivities(db, home.homeId)),
+          mine.map((row) => ({
+            activityId: row.activityId,
+            studentId: ids.student,
+            value: row.value,
+          })),
+          [ids.student],
+        ).get(ids.student);
+        assert.equal(computed.terms[setup.terms[0].id].value, 9);
+      },
+    );
+
+    await t.test("a rename that orphans a formula is refused", async () => {
+      // **F39's open half, closed.** A formula names a group, so a rename can
+      // strand one — and the answer is a refusal rather than a mark that turns
+      // into an error message on somebody's boletín.
+      const { home, setup } = await setupNow();
+      await assert.rejects(
+        () =>
+          writeSetup(db, home.homeId, {
+            groups: [{ id: setup.groups[0].id, name: "tps" }],
+            terms: [],
+            scales: [],
+          }),
+        /ya no existe/,
+      );
+      const rolled = await readSetup(db, home.homeId);
+      assert.equal(
+        rolled.groups[0].name,
+        "trabajos prácticos",
+        "the whole save is one transaction, so a refusal changes nothing",
+      );
+
+      // Renaming the term the final names is the same rule, one level up.
+      await assert.rejects(
+        () =>
+          writeSetup(db, home.homeId, {
+            groups: [],
+            terms: [{ id: setup.terms[0].id, name: "Trimestre 1" }],
+            scales: [],
+          }),
+        /ya no existe/,
+      );
+
+      // And the 409 is avoidable in one save, which is the whole reason the
+      // formulas travel in this body: rename the group and fix the formula
+      // together.
+      const fixed = await writeSetup(db, home.homeId, {
+        groups: [{ id: setup.groups[0].id, name: "tps" }],
+        terms: [
+          {
+            id: setup.terms[0].id,
+            name: "Primer trimestre",
+            formula: "avg(tps)",
+          },
+        ],
+        scales: [],
+      });
+      assert.equal(fixed.groups[0].name, "tps");
+      assert.equal(fixed.terms[0].formula, "avg(tps)");
+    });
+
+    await t.test(
+      "a formula that does not parse never reaches a row",
+      async () => {
+        const { home, setup } = await setupNow();
+        await assert.rejects(
+          () =>
+            writeSetup(db, home.homeId, {
+              groups: [],
+              terms: [
+                {
+                  id: setup.terms[0].id,
+                  name: setup.terms[0].name,
+                  formula: "avg(tps",
+                },
+              ],
+              scales: [],
+            }),
+          /posición/,
+        );
+        assert.equal(
+          (await readSetup(db, home.homeId)).terms[0].formula,
+          "avg(tps)",
+          "the stored formula is untouched",
+        );
+      },
+    );
+
+    await t.test("a group a formula names cannot be deleted", async () => {
+      // The delete's half of the same rule. Without it a teacher could remove
+      // the group from the panel and leave the formula pointing at nothing.
+      const { home } = await setupNow();
+      const withExtra = await writeSetup(db, home.homeId, {
+        groups: [],
+        terms: [],
+        scales: [],
+      });
+      const created = await writeSetup(db, home.homeId, {
+        groups: [
+          ...withExtra.groups.map((g) => ({ id: g.id, name: g.name })),
+          { name: "orales" },
+        ],
+        terms: [],
+        scales: [],
+      });
+      const extra = created.groups.find((g) => g.name === "orales");
+
+      // Nothing uses it yet, so it is deletable — that is the control.
+      await writeSetup(db, home.homeId, {
+        groups: [],
+        terms: [
+          {
+            id: created.terms[0].id,
+            name: created.terms[0].name,
+            formula: "0.8*avg(tps) + 0.2*avg(orales)",
+          },
+        ],
+        scales: [],
+      });
+      await assert.rejects(
+        () => deleteGroup(db, home.homeId, extra.id),
+        /fórmula/,
+      );
+
+      // Out of the formula, and now it goes.
+      await writeSetup(db, home.homeId, {
+        groups: [],
+        terms: [
+          {
+            id: created.terms[0].id,
+            name: created.terms[0].name,
+            formula: "avg(tps)",
+          },
+        ],
+        scales: [],
+      });
+      await deleteGroup(db, home.homeId, extra.id);
+      assert.equal(
+        (await readSetup(db, home.homeId)).groups.find(
+          (g) => g.name === "orales",
+        ),
+        undefined,
       );
     });
 

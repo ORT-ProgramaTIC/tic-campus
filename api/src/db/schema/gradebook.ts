@@ -28,17 +28,21 @@ import { offeringHome } from "./offering-home.js";
  * about — the kind of saving that costs a day.
  *
  * Each row is a **name and a position**, and an activity references it **by
- * id** — so renaming a group moves nothing. F39 also says renaming touches
- * neither the activities *nor the formula*, and the second half is **not true
- * yet**: F20's formula spells `avg(tps)`, by name, and there is no immutable
- * key column here to spell instead. The obligation is recorded under F39 for
- * F20's slice to settle, either with a `key` column backfilled from these
- * names or with a rename that rewrites the offering's formula text.
+ * id** — so renaming a group moves nothing there. **A formula, though, names a
+ * group**, and slice 8 settled F39's open half that way rather than with a
+ * `key` column: a name here is free text up to 80 characters, so `Trabajos
+ * Prácticos` is legal and is not spellable as a bare identifier either way, and
+ * a key would be a second name a teacher has to learn that stops matching the
+ * screen after one rename. Instead `writeSetup` re-validates every formula of
+ * the offering against the names it just wrote, and refuses a rename that would
+ * orphan one — a `409` the same save can avoid, because the names and the
+ * formulas travel in one body.
  *
- * **`offering_term` carries neither dates nor a formula.** F21 lets a teacher
- * date a term and F40 puts the formula source on it; neither has a reader yet,
- * and a column arrives with the feature that reads it — the rule
- * `offering_article` already follows for `offeringUnitId`.
+ * **`offering_term` carries a formula and no dates.** F40 puts the formula
+ * source on it and this is the feature that reads it; F21's optional dates
+ * still have no reader, so they are still not here — a column arrives with the
+ * feature that reads it, the rule `offering_article` follows for
+ * `offeringUnitId`.
  *
  * **`name` is unique per offering, and that is the database's job** rather than
  * the api's: two concurrent saves cannot both check-then-insert. It is not the
@@ -89,6 +93,19 @@ export const offeringTerm = campus.table(
       .references(() => offeringHome.id),
     name: text("name").notNull(),
     position: integer("position").notNull(),
+    /**
+     * This term's mark formula, as **source text** (F40) — `0.7*avg(tps) +
+     * 0.3*10*done_ratio(clase)`, over the offering's group names. Null is a
+     * term that computes nothing, which is every term until a teacher writes
+     * one.
+     *
+     * The text and nothing else: no compiled AST beside it, because a cache of
+     * a parse is a second thing that can disagree with the text, and re-parsing
+     * on read costs microseconds. **No computed mark is stored anywhere**, so
+     * there is nothing to invalidate when a result, a formula or a publish
+     * changes.
+     */
+    formula: text("formula"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

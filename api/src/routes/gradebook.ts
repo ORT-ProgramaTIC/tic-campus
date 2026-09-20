@@ -16,9 +16,16 @@ import {
 import {
   checkEntries,
   gradebook,
+  listActivities,
   myResults,
   saveResults,
 } from "../offerings/results.js";
+import { MAX_FORMULA, checkFormula } from "../offerings/formula.js";
+import {
+  computeBothViews,
+  computeMarks,
+  publishedOnly,
+} from "../offerings/marks.js";
 
 /**
  * The gradebook (F18, F19, F24, F26, F38, F39).
@@ -87,9 +94,20 @@ export function createGradebookRoutes(db: Db): Router {
           readSetup(db, homeId),
           gradebook(db, homeId, offeringId),
         ]);
-        res
-          .status(200)
-          .json({ ...setup, scalePresets: SCALE_PRESETS, ...grid });
+        res.status(200).json({
+          ...setup,
+          scalePresets: SCALE_PRESETS,
+          ...grid,
+          // Computed here and not stored anywhere (F20, F40), from rows the
+          // read above already has — no query, and nothing to invalidate when a
+          // result, a formula or a publish changes.
+          computed: computeBothViews(
+            setup,
+            grid.activities,
+            grid.results,
+            grid.students.map((student) => student.id),
+          ),
+        });
       } catch (cause) {
         next(cause);
       }
@@ -210,7 +228,100 @@ export function createGradebookRoutes(db: Db): Router {
             "Estas son las notas de quien cursa esta materia.",
           );
         }
-        res.status(200).json(await myResults(db, home.homeId, record.userId));
+        // Three reads rather than one: the marks, plus the setup and the
+        // activity list the formula needs. `done_ratio`'s denominator is how
+        // many done activities the group has, so the rows alone cannot answer
+        // it — and the list is filtered to what this student may see, or an
+        // unpublished activity would drag their own mark down and tell them it
+        // is there.
+        const [results, setup, activities] = await Promise.all([
+          myResults(db, home.homeId, record.userId),
+          readSetup(db, home.homeId),
+          listActivities(db, home.homeId),
+        ]);
+        const computed = computeMarks(
+          setup,
+          publishedOnly(activities),
+          // One student's own rows, which is all `myResults` loaded.
+          results.map((row) => ({
+            activityId: row.activityId,
+            studentId: record.userId,
+            value: row.value,
+          })),
+          [record.userId],
+        );
+        res
+          .status(200)
+          .json({ results, computed: computed.get(record.userId)! });
+      } catch (cause) {
+        next(cause);
+      }
+    })();
+  });
+
+  /**
+   * A draft formula, against this offering's real students (F20's live
+   * preview).
+   *
+   * **This is what the slice owes F44**, and it stops here: the editor is a
+   * screen and a screen is a person's job. Nothing is saved — the formula in
+   * the body is evaluated and thrown away, which is also why a syntax error is
+   * a `400` a teacher reads rather than anything that touches a row.
+   *
+   * `termId: null` means the final, whose names are the terms rather than the
+   * groups. Both go through the same evaluator as the grid, so a preview that
+   * agrees with the saved formula is not a coincidence.
+   */
+  router.post("/:offeringId/gradebook/preview", (req, res, next) => {
+    void (async () => {
+      try {
+        const { homeId } = await mustManage(req);
+        const offeringId = offeringIdFrom(String(req.params.offeringId));
+        const { formula, termId } = checkPreview(req.body);
+        const [setup, grid] = await Promise.all([
+          readSetup(db, homeId),
+          gradebook(db, homeId, offeringId),
+        ]);
+        if (
+          termId !== null &&
+          !setup.terms.some((term) => term.id === termId)
+        ) {
+          throw new ApiError(
+            400,
+            "unknown_term",
+            "Ese trimestre no es de esta materia. Recargá el boletín.",
+          );
+        }
+        // Parsed once here so a broken draft is one 400 with a position in it,
+        // rather than the same message repeated in every student's cell.
+        checkFormula(
+          formula,
+          termId === null
+            ? setup.terms.map((term) => term.name)
+            : setup.groups.map((group) => group.name),
+          termId === null ? "trimestre" : "grupo",
+        );
+        const draft: typeof setup =
+          termId === null
+            ? { ...setup, finalFormula: formula }
+            : {
+                ...setup,
+                terms: setup.terms.map((term) =>
+                  term.id === termId ? { ...term, formula } : term,
+                ),
+              };
+        res.status(200).json({
+          students: computeBothViews(
+            draft,
+            grid.activities,
+            grid.results,
+            grid.students.map((student) => student.id),
+          ).map((student) => ({
+            studentId: student.studentId,
+            computed:
+              termId === null ? student.final : (student.terms[termId] ?? null),
+          })),
+        });
       } catch (cause) {
         next(cause);
       }
@@ -218,4 +329,27 @@ export function createGradebookRoutes(db: Db): Router {
   });
 
   return router;
+}
+
+/** The preview body, by the house rules: hand-written, explicit caps, `400
+ *  invalid_body` with a Spanish message. */
+function checkPreview(raw: unknown): {
+  formula: string;
+  termId: string | null;
+} {
+  if (typeof raw !== "object" || raw === null) {
+    throw new ApiError(400, "invalid_body", "Esperábamos un objeto.");
+  }
+  const { formula, termId } = raw as Record<string, unknown>;
+  if (typeof formula !== "string" || formula.length > MAX_FORMULA) {
+    throw new ApiError(
+      400,
+      "invalid_body",
+      `La fórmula tiene que ser texto de hasta ${MAX_FORMULA} caracteres.`,
+    );
+  }
+  if (termId !== null && termId !== undefined && !isUuid(termId)) {
+    throw new ApiError(400, "invalid_body", "Ese id no es válido.");
+  }
+  return { formula, termId: typeof termId === "string" ? termId : null };
 }

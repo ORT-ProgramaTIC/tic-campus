@@ -6,10 +6,12 @@ import {
   offeringScaleLevel,
   offeringTerm,
 } from "../db/schema/gradebook.js";
+import { offeringHome } from "../db/schema/offering-home.js";
 import { offeringArticle } from "../db/schema/offering-article.js";
 import { result } from "../db/schema/result.js";
 import { ApiError } from "../middleware/errors.js";
 import { isUuid } from "../library/program.js";
+import { MAX_FORMULA, formulaNames, parseFormula } from "./formula.js";
 
 /**
  * What an offering names before it can mark anything (F39): its groups, its
@@ -97,24 +99,41 @@ export interface Scale extends Named {
   levels: Level[];
 }
 
-export interface Setup {
-  groups: Named[];
-  terms: Named[];
-  scales: Scale[];
+export interface Term extends Named {
+  /** This term's mark formula as source text (F40), or null for a term that
+   *  computes nothing. Its names are the offering's **groups**. */
+  formula: string | null;
 }
 
-/** Three reads and a regroup. The levels come back in one query and are nested
+export interface Setup {
+  groups: Named[];
+  terms: Term[];
+  scales: Scale[];
+  /** The offering's final formula (F21) — a second formula, over the **term**
+   *  names. It rides in this payload rather than one of its own because the
+   *  save that renames a term has to be able to fix it in the same body. */
+  finalFormula: string | null;
+}
+
+/** Four reads and a regroup. The levels come back in one query and are nested
  *  in memory rather than fetched per scale — a handful of rows either way, and
  *  a loop over scales would be a query per scale for nothing. */
 export async function readSetup(db: Db, homeId: string): Promise<Setup> {
-  const [groups, terms, scales, levels] = await Promise.all([
+  const [groups, terms, scales, levels, home] = await Promise.all([
     db
       .select(NAMED(offeringGroup))
       .from(offeringGroup)
       .where(eq(offeringGroup.offeringHomeId, homeId))
       .orderBy(offeringGroup.position),
+    // Its own projection rather than `NAMED`: the formula is a term's alone,
+    // and the three tables stop being identical here.
     db
-      .select(NAMED(offeringTerm))
+      .select({
+        id: offeringTerm.id,
+        name: offeringTerm.name,
+        position: offeringTerm.position,
+        formula: offeringTerm.formula,
+      })
       .from(offeringTerm)
       .where(eq(offeringTerm.offeringHomeId, homeId))
       .orderBy(offeringTerm.position),
@@ -140,6 +159,10 @@ export async function readSetup(db: Db, homeId: string): Promise<Setup> {
         ),
       )
       .orderBy(offeringScaleLevel.position),
+    db
+      .select({ finalFormula: offeringHome.finalFormula })
+      .from(offeringHome)
+      .where(eq(offeringHome.id, homeId)),
   ]);
 
   return {
@@ -151,6 +174,7 @@ export async function readSetup(db: Db, homeId: string): Promise<Setup> {
         .filter((level) => level.scaleId === scale.id)
         .map(({ scaleId: _scaleId, ...level }) => level),
     })),
+    finalFormula: home[0]?.finalFormula ?? null,
   };
 }
 
@@ -178,10 +202,18 @@ export interface ScaleInput extends NamedInput {
   levels: LevelInput[];
 }
 
+export interface TermInput extends NamedInput {
+  /** `undefined` leaves it alone, `null` clears it. The whole-list save never
+   *  deletes and a formula is no exception — a client that does not know about
+   *  formulas must not wipe one by saving the panel it does know about. */
+  formula?: string | null;
+}
+
 export interface SetupInput {
   groups: NamedInput[];
-  terms: NamedInput[];
+  terms: TermInput[];
   scales: ScaleInput[];
+  finalFormula?: string | null;
 }
 
 export async function writeSetup(
@@ -213,7 +245,28 @@ export async function writeSetup(
         await upsertNamed(tx, offeringGroup, homeId, group, position);
       }
       for (const [position, term] of input.terms.entries()) {
-        await upsertNamed(tx, offeringTerm, homeId, term, position);
+        const termId = await upsertNamed(
+          tx,
+          offeringTerm,
+          homeId,
+          term,
+          position,
+        );
+        // Its own statement rather than a field in `upsertNamed`: that helper
+        // serves three tables and only one of them has a formula, and a
+        // per-table extra would make it generic for a single caller.
+        if (term.formula !== undefined) {
+          await tx
+            .update(offeringTerm)
+            .set({ formula: term.formula })
+            .where(eq(offeringTerm.id, termId));
+        }
+      }
+      if (input.finalFormula !== undefined) {
+        await tx
+          .update(offeringHome)
+          .set({ finalFormula: input.finalFormula })
+          .where(eq(offeringHome.id, homeId));
       }
       for (const [position, scale] of input.scales.entries()) {
         const scaleId = await upsertNamed(
@@ -225,6 +278,7 @@ export async function writeSetup(
         );
         await writeLevels(tx, scaleId, scale.levels);
       }
+      await revalidateFormulas(tx, homeId);
     });
   } catch (cause) {
     // 23505 is a unique violation, and the only unique index a save can reach
@@ -287,6 +341,84 @@ async function mine(
 }
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
+/**
+ * **F39's open half, closed** (slice 8): every formula of the offering, checked
+ * against the names that now exist. Inside the transaction and after the
+ * writes, so a refusal rolls the whole save back and nothing moves.
+ *
+ * It re-reads rather than reading the payload, and that is the point. The save
+ * never deletes, so a term the body left out keeps its formula and a group the
+ * body left out keeps its name — only the database knows the state a rename
+ * actually produced.
+ *
+ * A formula names a **group** and the final names a **term**, so renaming
+ * either can orphan one. The answer is a `409` the same save can avoid, since
+ * the names and the formulas travel in one body: fix both, save once.
+ */
+async function revalidateFormulas(tx: Tx, homeId: string): Promise<void> {
+  const [groups, terms, home] = await Promise.all([
+    tx
+      .select({ name: offeringGroup.name })
+      .from(offeringGroup)
+      .where(eq(offeringGroup.offeringHomeId, homeId)),
+    tx
+      .select({ name: offeringTerm.name, formula: offeringTerm.formula })
+      .from(offeringTerm)
+      .where(eq(offeringTerm.offeringHomeId, homeId)),
+    tx
+      .select({ finalFormula: offeringHome.finalFormula })
+      .from(offeringHome)
+      .where(eq(offeringHome.id, homeId)),
+  ]);
+
+  const groupNames = new Set(groups.map((group) => group.name));
+  for (const term of terms) {
+    if (term.formula === null) continue;
+    check(term.formula, groupNames, "grupo", `del trimestre «${term.name}»`);
+  }
+  const finalFormula = home[0]?.finalFormula ?? null;
+  if (finalFormula !== null) {
+    check(
+      finalFormula,
+      new Set(terms.map((term) => term.name)),
+      "trimestre",
+      "final",
+    );
+  }
+}
+
+/** Syntax is a `400` — the text is wrong. A name that is not there any more is
+ *  a `409`: the text was fine until this save moved something out from under
+ *  it, which is a different thing to tell a teacher. */
+function check(
+  formula: string,
+  known: Set<string>,
+  noun: string,
+  whose: string,
+): void {
+  let tree;
+  try {
+    tree = parseFormula(formula);
+  } catch (cause) {
+    if (cause instanceof ApiError) {
+      throw new ApiError(
+        cause.status,
+        cause.code,
+        `La fórmula ${whose}: ${cause.message}`,
+      );
+    }
+    throw cause;
+  }
+  for (const name of formulaNames(tree)) {
+    if (known.has(name)) continue;
+    throw new ApiError(
+      409,
+      noun === "grupo" ? "group_renamed_in_use" : "term_renamed_in_use",
+      `La fórmula ${whose} nombra un ${noun} que ya no existe: «${name}». Si lo estás renombrando, arreglá la fórmula en el mismo guardado.`,
+    );
+  }
+}
 
 async function upsertNamed(
   tx: Tx,
@@ -381,6 +513,14 @@ export async function deleteGroup(
     "group_in_use",
     "Ese grupo tiene actividades adentro. Movelas a otro grupo antes de borrarlo.",
   );
+  await refuseIfNamed(
+    db,
+    homeId,
+    offeringGroup,
+    groupId,
+    "group_in_use",
+    "grupo",
+  );
   await removeNamed(db, offeringGroup, homeId, groupId, "grupo");
 }
 
@@ -396,7 +536,63 @@ export async function deleteTerm(
     "term_in_use",
     "Ese trimestre tiene actividades adentro. Movelas a otro antes de borrarlo.",
   );
+  await refuseIfNamed(
+    db,
+    homeId,
+    offeringTerm,
+    termId,
+    "term_in_use",
+    "trimestre",
+  );
   await removeNamed(db, offeringTerm, homeId, termId, "trimestre");
+}
+
+/**
+ * The delete's half of the rule `revalidateFormulas` enforces on the save: a
+ * group a formula names cannot be deleted either, or the next read of that term
+ * would be an error where a mark used to be.
+ *
+ * **The same code as the in-use refusal**, because it is the same answer —
+ * something still points at this row, and a client branches on it the same way.
+ * Only the message differs, since only the message is actionable.
+ */
+async function refuseIfNamed(
+  db: Db,
+  homeId: string,
+  table: typeof offeringGroup | typeof offeringTerm,
+  rowId: string,
+  code: string,
+  noun: string,
+): Promise<void> {
+  const [row] = await db
+    .select({ name: table.name })
+    .from(table)
+    .where(and(eq(table.id, rowId), eq(table.offeringHomeId, homeId)))
+    .limit(1);
+  if (row === undefined) return;
+
+  const setup = await readSetup(db, homeId);
+  const sources = [
+    ...setup.terms.map((term) => term.formula),
+    setup.finalFormula,
+  ];
+  for (const source of sources) {
+    if (source === null) continue;
+    let names: string[];
+    try {
+      names = formulaNames(parseFormula(source));
+    } catch {
+      // A formula that no longer parses names nothing this delete can strand.
+      continue;
+    }
+    if (names.includes(row.name)) {
+      throw new ApiError(
+        409,
+        code,
+        `Ese ${noun} se usa en una fórmula. Sacalo de la fórmula antes de borrarlo.`,
+      );
+    }
+  }
 }
 
 export async function deleteScale(
@@ -460,12 +656,47 @@ export function checkSetup(raw: unknown): SetupInput {
   if (typeof raw !== "object" || raw === null) {
     throw new ApiError(400, "invalid_body", "Esperábamos un objeto.");
   }
-  const { groups, terms, scales } = raw as Record<string, unknown>;
+  const { groups, terms, scales, finalFormula } = raw as Record<
+    string,
+    unknown
+  >;
   return {
     groups: checkNamed(groups, "grupos"),
-    terms: checkNamed(terms, "trimestres"),
+    terms: checkTerms(terms),
     scales: checkScales(scales),
+    ...checkOptionalFormula(finalFormula, "finalFormula"),
   };
+}
+
+function checkTerms(raw: unknown): TermInput[] {
+  return checkNamed(raw, "trimestres").map((named, at) => ({
+    ...named,
+    ...checkOptionalFormula(
+      (Array.isArray(raw) ? (raw[at] as Record<string, unknown>) : {}).formula,
+      "formula",
+    ),
+  }));
+}
+
+/** Absent stays absent, so that spreading this writes no key at all — which is
+ *  what `undefined` means downstream: leave the stored formula alone. */
+function checkOptionalFormula(
+  raw: unknown,
+  key: "formula" | "finalFormula",
+): { formula?: string | null } | { finalFormula?: string | null } {
+  if (raw === undefined) return {};
+  if (raw === null) return { [key]: null };
+  if (typeof raw !== "string" || raw.length > MAX_FORMULA) {
+    throw new ApiError(
+      400,
+      "invalid_body",
+      `La fórmula tiene que ser texto de hasta ${MAX_FORMULA} caracteres, o null.`,
+    );
+  }
+  // Blank is the same as absent: an editor that clears the box means "none",
+  // and storing "" would be a third state that parses as an error forever.
+  const text = raw.trim();
+  return { [key]: text === "" ? null : text };
 }
 
 function checkNamed(raw: unknown, plural: string): NamedInput[] {

@@ -43,6 +43,13 @@
       "when": 1789937028663,
       "tag": "0005_the_gradebook_floor",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789939602786,
+      "tag": "0006_the_formula_text",
+      "breakpoints": true
     }
   ]
 }

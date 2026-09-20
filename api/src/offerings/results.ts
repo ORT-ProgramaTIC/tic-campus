@@ -130,8 +130,16 @@ export async function gradebook(
 }
 
 /** An activity **is** a use with a `value_type` (F18) — that one `is not null`
- *  is the whole of "is this graded", which is why it is not a second column. */
-async function listActivities(db: Db, homeId: string): Promise<Activity[]> {
+ *  is the whole of "is this graded", which is why it is not a second column.
+ *
+ *  **Exported for the evaluator** (F20): `done_ratio`'s denominator is how many
+ *  done activities a group has, not how many results exist, so computing a mark
+ *  needs the activity list and not only the `result` rows. A second query for
+ *  the same rows would be a second thing that can disagree with this one. */
+export async function listActivities(
+  db: Db,
+  homeId: string,
+): Promise<Activity[]> {
   const rows = await db
     .select({
       id: offeringArticle.id,

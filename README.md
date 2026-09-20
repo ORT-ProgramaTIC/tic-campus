@@ -388,10 +388,10 @@ and re-creating it revives that row, so one typo does not burn a URL forever.
 
 Everything above is content. The reason the old campus exists at all is marks, and this is
 the floor under them: what an offering **names** (F39), which of its articles are
-**activities** (F18), and what a student **got** (F38). The formula that turns results into
-a mark (F20, F40) is a slice of its own and is not here — none of it was reachable until
-these were rows, and nothing is stale for having waited, because computed marks are never
-stored.
+**activities** (F18), what a student **got** (F38), and — since slice 8 — the **formula that
+turns those results into a mark** (F20, F40). Nothing was stale for having waited a slice,
+because computed marks are never stored: they are derived on every read, from the rows the
+read already has.
 
 ```
 GET    /api/homes/:oferta/gradebook                     staff     la grilla entera, de una (F26)
@@ -399,9 +399,29 @@ PUT    /api/homes/:oferta/gradebook                     staff     grupos, trimes
 DELETE /api/homes/:oferta/gradebook/groups/:id          staff     409 si tiene actividades adentro
 DELETE /api/homes/:oferta/gradebook/terms/:id           staff     idem
 DELETE /api/homes/:oferta/gradebook/scales/:id          staff     idem; se lleva sus niveles
+POST   /api/homes/:oferta/gradebook/preview             staff     una fórmula en borrador, sobre los estudiantes de verdad (F20)
 PUT    /api/homes/:oferta/results                       staff     guardar cada celda tocada, en una llamada (F38)
-GET    /api/homes/:oferta/results/mine                  sesión    mis notas publicadas (F24)
+GET    /api/homes/:oferta/results/mine                  sesión    mis notas publicadas y mi nota calculada (F24)
 ```
+
+**La fórmula.** `PUT …/gradebook` carries each term's `formula` and the offering's
+`finalFormula` as **source text** (F40) — `0.7*avg(tps) + 0.3*10*done_ratio(clase)`, over the
+offering's **group names**, quoted when a name has a space: `avg("Trabajos Prácticos")`. The
+final is a second formula over the **term** names. `api/src/offerings/formula.ts` parses it by
+hand, with no `eval` and no dependency, and gives one of three things per cell: a number,
+`null` for _sin nota_, or an error a teacher can read — never `NaN`, and division by zero is
+an error rather than a quiet blank.
+
+Two refusals are worth knowing before you save anything. A formula names a group, so **a
+rename that would orphan one is a `409`** (F39) — fix the name and the formula in the same
+body, which is why they travel together. And `deleteGroup`/`deleteTerm` refuse a row a
+formula names, under the same codes the in-use refusal already uses.
+
+`GET …/gradebook` returns `computed` per student, **both views side by side** (F24): `all` is
+what the teacher is looking at, `published` is what the student would see right now. One
+evaluator, called twice with different **activity lists** — filtering the list and not just
+the results is what keeps an unpublished activity out of `done_ratio`'s denominator, where it
+would leak that it exists.
 
 **Two routers, one prefix, one `guard`.** The gradebook hangs off `/api/homes` beside
 `home-content.ts`, for the reason that prefix exists — its segments are ids, not a public
