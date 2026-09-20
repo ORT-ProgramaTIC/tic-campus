@@ -4,7 +4,27 @@ import { Pool } from "pg";
 import { createDb } from "../dist/db/client.js";
 import { runMigrations } from "../dist/db/migrate.js";
 import { activate, deactivate } from "../dist/offerings/activation.js";
-import { capabilitiesFor } from "../dist/offerings/access.js";
+import { capabilitiesFor, NONE } from "../dist/offerings/access.js";
+import {
+  activeHome,
+  homeContent,
+  readableArticle,
+  useArticle,
+} from "../dist/offerings/content.js";
+import {
+  archiveArticle,
+  createArticle,
+  listLibrary,
+  publishArticle,
+  readArticle,
+  readVersion,
+  saveDraft,
+} from "../dist/library/articles.js";
+import {
+  deleteUnit,
+  readProgram,
+  writeProgram,
+} from "../dist/library/program.js";
 import {
   listActivated,
   listForAdmin,
@@ -250,6 +270,234 @@ test(
       });
     });
 
+    // --- slice 5: the library, and what an offering does with it -------------
+    // A publish date already past, so `mayRead` lets an anonymous visitor in;
+    // relative to now because a literal year eventually stops being the past.
+    const PUBLISHED = new Date(Date.now() - 86_400_000);
+
+    // Ordered before the deactivation below, which archives `ids.current` and
+    // is what every subtest above depends on not having happened yet.
+
+    await t.test("a library article is written, then published", async () => {
+      const created = await createArticle(db, ids.subject, "tp-sql", "TP SQL");
+      assert.equal(created.published, false);
+      assert.equal(created.hasUnpublishedDraft, false);
+
+      const draft = await saveDraft(
+        db,
+        ids.subject,
+        "tp-sql",
+        ids.teacher,
+        ":::callout\nOjo con el JOIN\n:::\n",
+        null,
+      );
+      // A second author saving against the draft they loaded is fine; saving
+      // against the one *before* it is F12's warning, and it names the author.
+      await assert.rejects(
+        () => saveDraft(db, ids.subject, "tp-sql", ids.otherTeacher, "x", null),
+        /Ana Docente/,
+      );
+      const second = await saveDraft(
+        db,
+        ids.subject,
+        "tp-sql",
+        ids.otherTeacher,
+        "# TP SQL\n",
+        draft.id,
+      );
+      assert.notEqual(second.id, draft.id, "every save keeps a revision (F11)");
+
+      const before = await readArticle(db, ids.subject, "tp-sql");
+      assert.equal(before.hasUnpublishedDraft, true);
+      assert.equal(before.versions.length, 2, "the history to restore from");
+      assert.equal(before.versions[0].authorName, "Beto Docente");
+
+      await publishArticle(db, ids.subject, "tp-sql");
+      const after = await readArticle(db, ids.subject, "tp-sql");
+      assert.equal(after.published, true);
+      assert.equal(after.hasUnpublishedDraft, false);
+
+      // Restoring is reading a revision and saving it again — there is no verb.
+      const old = await readVersion(db, ids.subject, "tp-sql", draft.id);
+      assert.match(old.body, /callout/);
+    });
+
+    await t.test("an offering uses it, and a visitor reads it", async () => {
+      const [unit] = await writeProgram(db, ids.subject, [
+        { title: "Consultas", contents: "# SELECT" },
+      ]);
+      const home = await activeHome(db, ids.current);
+      assert.ok(home, "activated above");
+      assert.equal(home.subjectId, ids.subject);
+
+      const article = (await listLibrary(db, ids.subject)).find(
+        (a) => a.slug === "tp-sql",
+      );
+      // This write is the only thing that proves `campus_app` was granted DML
+      // on `offering_article` — the barrel is what earns the grant, and a table
+      // missing from it typechecks fine and fails here.
+      await useArticle(db, home.homeId, ids.subject, article.id, {
+        programUnitId: unit.id,
+        position: 0,
+        publishedAt: null,
+        restricted: false,
+      });
+
+      // Filed but not published *here*: the teacher sees it, nobody else does.
+      const anonHidden = await homeContent(db, ids.current, ids.subject, NONE);
+      assert.deepEqual(anonHidden.articles, []);
+      assert.equal(anonHidden.program.length, 1, "the program is public");
+
+      const teacherCan = await capabilitiesFor(
+        db,
+        actor(ids.teacher, ["teacher"]),
+        ids.current,
+        ids.subject,
+      );
+      const staffView = await homeContent(
+        db,
+        ids.current,
+        ids.subject,
+        teacherCan,
+      );
+      assert.equal(staffView.articles.length, 1);
+      assert.equal(staffView.articles[0].public, false, "flagged, not hidden");
+
+      await useArticle(db, home.homeId, ids.subject, article.id, {
+        programUnitId: unit.id,
+        position: 0,
+        publishedAt: PUBLISHED,
+        restricted: false,
+      });
+      const open = await homeContent(db, ids.current, ids.subject, NONE);
+      assert.equal(open.articles.length, 1, "idempotent on (home, article)");
+      assert.equal(open.articles[0].unitId, unit.id);
+
+      const read = await readableArticle(db, ids.current, "tp-sql", NONE);
+      assert.match(
+        read.body,
+        /# TP SQL/,
+        "the published version, not the draft",
+      );
+    });
+
+    await t.test("restricted is the enrolled and the staff", async () => {
+      const home = await activeHome(db, ids.current);
+      const article = (await listLibrary(db, ids.subject)).find(
+        (a) => a.slug === "tp-sql",
+      );
+      await useArticle(db, home.homeId, ids.subject, article.id, {
+        programUnitId: null,
+        position: 0,
+        publishedAt: PUBLISHED,
+        restricted: true,
+      });
+
+      // Absent, not forbidden: a 403 would confirm the solution is there.
+      assert.equal(
+        await readableArticle(db, ids.current, "tp-sql", NONE),
+        null,
+      );
+
+      const studentCan = await capabilitiesFor(
+        db,
+        actor(ids.student, ["student"]),
+        ids.current,
+        ids.subject,
+      );
+      assert.equal(studentCan.seeOwnMarks, true, "enrolment, not roles[]");
+      const forClass = await readableArticle(
+        db,
+        ids.current,
+        "tp-sql",
+        studentCan,
+      );
+      assert.match(forClass.body, /# TP SQL/);
+
+      // The student of no offering: enrolled in a course nothing is served to.
+      const orphanCan = await capabilitiesFor(
+        db,
+        actor(ids.orphanStudent, ["student"]),
+        ids.current,
+        ids.subject,
+      );
+      assert.equal(
+        await readableArticle(db, ids.current, "tp-sql", orphanCan),
+        null,
+      );
+    });
+
+    await t.test(
+      "a unit in use cannot be deleted out from under it",
+      async () => {
+        const [unit] = await readProgram(db, ids.subject);
+        const home = await activeHome(db, ids.current);
+        const article = (await listLibrary(db, ids.subject)).find(
+          (a) => a.slug === "tp-sql",
+        );
+        await useArticle(db, home.homeId, ids.subject, article.id, {
+          programUnitId: unit.id,
+          position: 0,
+          publishedAt: PUBLISHED,
+          restricted: false,
+        });
+        // A foreign-key violation would be a 500 about nothing the teacher did.
+        await assert.rejects(
+          () => deleteUnit(db, ids.subject, unit.id),
+          /artículos/,
+        );
+
+        // And the whole-list PUT does not delete: a colleague's unit added after
+        // this teacher loaded the page survives being left out of their save.
+        const kept = await writeProgram(db, ids.subject, [
+          { id: unit.id, title: "Consultas", contents: "# SELECT" },
+        ]);
+        assert.equal(kept.length, 1);
+        const another = await writeProgram(db, ids.subject, [
+          { id: unit.id, title: "Consultas", contents: "# SELECT" },
+          { title: "Índices", contents: "" },
+        ]);
+        assert.equal(another.length, 2);
+        assert.deepEqual(
+          (await writeProgram(db, ids.subject, [])).map((u) => u.title),
+          ["Consultas", "Índices"],
+          "an empty save removes nothing",
+        );
+      },
+    );
+
+    await t.test(
+      "an archived article stops being served everywhere",
+      async () => {
+        await archiveArticle(db, ids.subject, "tp-sql");
+        assert.equal(
+          await readableArticle(db, ids.current, "tp-sql", NONE),
+          null,
+        );
+        assert.deepEqual(await listLibrary(db, ids.subject), []);
+
+        // The slug is not burned: the unique index is total, so creating it again
+        // revives the same row rather than colliding with it forever.
+        const back = await createArticle(
+          db,
+          ids.subject,
+          "tp-sql",
+          "TP SQL (v2)",
+        );
+        assert.equal(back.title, "TP SQL (v2)");
+        assert.equal(
+          back.published,
+          true,
+          "its published version came back too",
+        );
+        // A live one is still a conflict.
+        await assert.rejects(
+          () => createArticle(db, ids.subject, "tp-sql", "otra vez"),
+          /Ya hay un artículo/,
+        );
+      },
+    );
+
     await t.test(
       "the admin listing shows what is not activated yet",
       async () => {
@@ -266,6 +514,31 @@ test(
         assert.equal(await deactivate(db, ids.current), true);
         assert.equal(await deactivate(db, ids.current), false, "idempotent");
         assert.deepEqual(await listActivated(db, 2027), []);
+        // Archiving, not deleting (F36): the article the offering was using is
+        // still filed, and the home is still there to come back to. Nothing
+        // else exercises `listForAdmin`'s archived-is-not-activated expression,
+        // because every other read joins the home inner.
+        assert.deepEqual(
+          (await listForAdmin(db, 2027))
+            .map((o) => [o.offeringId, o.activated])
+            .sort((a, b) => a[0] - b[0]),
+          [
+            [ids.current, false],
+            [ids.optional, false],
+          ].sort((a, b) => a[0] - b[0]),
+        );
+        assert.equal(
+          await readableArticle(db, ids.current, "tp-sql", NONE),
+          null,
+          "an archived home serves nothing",
+        );
+
+        assert.equal(await activate(db, ids.current, ids.admin), true);
+        assert.deepEqual(
+          (await listActivated(db, 2027)).map((o) => o.offeringId),
+          [ids.current],
+          "re-activating brings the same home back",
+        );
       },
     );
   },

@@ -9,8 +9,8 @@ import type { NextFunction, Request, Response } from "express";
  *
  * Success responses carry the resource directly — there is no data envelope
  * (MEV's `api/src/middleware/errors.ts`, which this is a port of, minus its
- * body-parser and streaming cases: campus parses no bodies and streams
- * nothing).
+ * streaming cases: campus streams nothing. Its body-parser cases came back
+ * with slice 5, which is where campus started parsing bodies).
  *
  * **Slice 3 had no handler at all.** Its two routes wrote the envelope by hand
  * and a thrown error reached Express 5's default, which answers with an HTML
@@ -58,6 +58,14 @@ export function errorHandler(
     return;
   }
 
+  const fromBody = bodyParserError(err);
+  if (fromBody) {
+    res.status(fromBody.status).json({
+      error: { code: fromBody.code, message: fromBody.message },
+    });
+    return;
+  }
+
   // Unexpected, so it is logged here and nowhere else: a route that both logs
   // and rethrows produces two records of one failure. `console` rather than
   // pino because nothing in this process has a logger yet — Vercel is not where
@@ -69,4 +77,42 @@ export function errorHandler(
       message: "Algo se rompió de nuestro lado.",
     },
   });
+}
+
+/**
+ * `express.json()` throws its own errors, and none of them are `ApiError` —
+ * so without this a teacher whose browser sent a truncated body would be told
+ * campus broke, in a 500, and the failure would be logged as unexplained.
+ *
+ * They carry `status` and a `type` string rather than a class to match on
+ * (body-parser sets both), and slice 5 is the first to parse a body at all.
+ */
+function bodyParserError(
+  err: unknown,
+): { status: number; code: string; message: string } | null {
+  if (typeof err !== "object" || err === null) return null;
+  const { type, status } = err as { type?: unknown; status?: unknown };
+
+  if (type === "entity.too.large") {
+    return {
+      status: 413,
+      code: "body_too_large",
+      message: "Eso es demasiado grande para mandar de una.",
+    };
+  }
+  if (type === "encoding.unsupported" || type === "charset.unsupported") {
+    return {
+      status: 415,
+      code: "unsupported_encoding",
+      message: "No entendemos esa codificación.",
+    };
+  }
+  if (err instanceof SyntaxError && status === 400 && "body" in err) {
+    return {
+      status: 400,
+      code: "invalid_json",
+      message: "El cuerpo del pedido no es JSON válido.",
+    };
+  }
+  return null;
 }

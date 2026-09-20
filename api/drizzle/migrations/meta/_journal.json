@@ -22,6 +22,13 @@
       "when": 1789909996603,
       "tag": "0002_the_offering_home",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789922462768,
+      "tag": "0003_the_offering_contents",
+      "breakpoints": true
     }
   ]
 }

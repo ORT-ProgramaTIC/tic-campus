@@ -43,9 +43,9 @@ the host by `make migrate` and never enters a container.
 of the secrets: it sets no `USER`, so root is the uid that opens them. Adding one means
 chowning both in the same commit (`../DEPLOY-CONVENTIONS.md` §4).
 
-Campus owns six tables so far — the article library, the program units, the two the login
-needs and `offering_home` (`api/src/db/schema/`, `docs/FEATURES.md` F37). Schema changes
-are Drizzle migrations:
+Campus owns seven tables so far — the article library, the program units, the two the login
+needs, `offering_home` and `offering_article` (`api/src/db/schema/`, `docs/FEATURES.md`
+F37). Schema changes are Drizzle migrations:
 
 ```sh
 make migrate        # `make deploy` already does this, after the roll
@@ -158,6 +158,12 @@ than a configuration**:
   (`TIC_AUTH_AUDIENCE`). `build_app(issuer, "tic-campus")`, or the flag.
 - **The cookie is `tic_campus_session_dev`**, not the `__Host-` one, whenever `NODE_ENV` is
   not `production` — a curl sending the production name looks like a broken session.
+- **The client secret is read from a _file_**, `TIC_AUTH_CLIENT_SECRET_FILE`, and there is no
+  inline variable to set instead. Exporting a `TIC_AUTH_CLIENT_SECRET` that nothing reads
+  leaves `config.auth` unset, and then the four `/api/auth/*` routes simply do not exist —
+  so the first symptom is a **404 on `/api/auth/login`**, which reads like a mounting bug
+  rather than a missing secret. `printf 'anything' > /tmp/secret` is enough; the mock never
+  checks it.
 
 The login is four steps, not one redirect, because `/authorize` serves a consent **form**:
 `GET /api/auth/login` (keep the cookie jar, read `state` and `redirect_uri` off the
@@ -188,7 +194,7 @@ GET    /api/offerings/mine?year=2027               sesión    "Mis materias" (F6
 GET    /api/offerings/:year/:materia/:oferta       público   resolver una URL pública (F32)
 GET    /api/admin/offerings?year=2027              ADMIN     el directorio, con qué está activado
 POST   /api/admin/offerings/:id/activation         ADMIN     activar (idempotente)
-DELETE /api/admin/offerings/:id/activation         ADMIN     desactivar
+DELETE /api/admin/offerings/:id/activation         ADMIN     desactivar (archiva, F36)
 ```
 
 **`year` is optional and absent means the _current_ school year**, which `directory.*`
@@ -201,6 +207,12 @@ offering's segment is its own name if it has one and its courses' names if it do
 directory rename therefore changes the URL, which is the point — there is no stored copy to
 keep in step. Two offerings that would produce the same URL both resolve to **404** rather
 than one of them winning.
+
+**Deactivating archives, it does not delete** (F36, slice 5). The home now has an
+offering's articles hanging off it, so a `DELETE` behind an idempotent admin button would
+throw away a teacher's work — and a cascade would, in time, reach students' marks. The row
+stays with `archived_at` set, every public read filters it out, and re-activating brings
+the whole home back. `DELETE …/activation` answers `archived`, not `removed`.
 
 ### Three relations that look like one question
 
@@ -237,6 +249,85 @@ tests — then creates campus's four roles and runs the real migrator as `campus
 the queries as `campus_svc`. That is what makes a missing `GRANT` a failing test instead of
 a deploy that dies in a container log. Regenerating it (`db:stubs:generate`) needs both, and
 `db:stubs:check` skips rather than fails when tic-auth is not on disk.
+
+## Los artículos
+
+An article belongs to a **subject's library**, not to a course and not to a year (F8). An
+offering _uses_ it, and the use carries what differs between offerings: where it sits, when
+it appears and who may read it. Next year's offering uses the same row, which is what makes
+a fix reach every year instead of the one whose copy somebody remembered.
+
+```
+GET    /api/subjects/:id/articles                      staff     el índice de la biblioteca (F8)
+POST   /api/subjects/:id/articles                      staff     crear: slug y título (F8, F32)
+GET    /api/subjects/:id/articles/:slug                staff     borrador, publicada, historial (F11)
+GET    /api/subjects/:id/articles/:slug/versions/:vid  staff     el cuerpo de una revisión (F11)
+PUT    /api/subjects/:id/articles/:slug/draft          staff     guardar borrador (F11, F12)
+POST   /api/subjects/:id/articles/:slug/publish        staff     mover el puntero (F8, F11)
+DELETE /api/subjects/:id/articles/:slug                staff     archivar (F36)
+GET    /api/subjects/:id/program                       staff     las unidades (F15)
+PUT    /api/subjects/:id/program                       staff     crear/renombrar/reordenar (F15)
+DELETE /api/subjects/:id/program/:unitId               staff     borrar una unidad (409 si está en uso)
+PUT    /api/homes/:oferta/articles/:articleId          staff     usarlo: unidad, orden, fecha, visibilidad (F4, F8)
+DELETE /api/homes/:oferta/articles/:articleId          staff     dejar de usarlo
+GET    /api/offerings/:año/:materia/:oferta            público   ahora con programa y artículos (F13, F15)
+GET    /api/offerings/:año/:materia/:oferta/:artículo  público   leer un artículo publicado (F4, F32)
+```
+
+`staff` is **not one gate**. The library is `editLibrary` — teaching _any_ offering of that
+subject, in _any_ year — so a teacher fixing a typo in a 2026 article does not have to still
+be teaching 2026. What an offering does with an article is `manageOffering`, which is
+teaching _that_ offering. Both come from `capabilitiesFor` (F5) and neither reads `roles[]`.
+
+**`/api/offerings` segments are a public URL; `/api/homes` segments are ids.** The two could
+have shared a prefix, and that is exactly the trap: `/api/offerings` owns
+`GET /:year/:subject/:offering`, Express matches in mount order, and the first staff `GET`
+hung under it would be read as a public URL and answer `400 invalid_year` before anything
+had a chance to 404. Today's two routes are a PUT and a DELETE, so nothing collides — which
+is a coincidence, not a design, and a separate prefix costs one string.
+
+**The api parses no Markdown, on purpose** (F7). `article_version.body` goes in and comes
+out as the teacher typed it, directives and all. `remark-directive`, the `:::callout` /
+`::download{…}` allowlist and the component set are the renderer's, because the alternative
+is a server that decides how content looks — and the interface is a person's job (F44).
+
+**Publishing is moving a pointer.** `POST …/publish` writes `article.published_version_id`
+and nothing else, so every offering using that article serves the new text on its next
+request, past years included (F8). There is no per-offering copy to update and no deploy.
+Pinning a version per offering was rejected _because_ propagation is the reason the library
+exists.
+
+**There is no restore endpoint, and that is the feature.** Restoring a revision is
+`GET …/versions/:vid` followed by `PUT …/draft` with that body — two calls the client
+already has. The revision list comes back inline from the article read, because without it
+there is nothing to restore _from_.
+
+**Two teachers, last write wins — but not silently** (F12). `PUT …/draft` carries the
+`baseVersionId` the edit started from; a save against a stale one is refused `409
+stale_draft` with the other author's name in the message, and saving again against the
+current one goes through. No lock, no CRDT, no websocket for something that is rare.
+
+**An article nobody may read answers 404, never 403** (F4). A use is public when the library
+article is published, `publishedAt` has arrived, and `restricted` is false — otherwise it
+needs `seeOwnMarks` (enrolment) or staff. A 403 would confirm the article is there, which
+for an exam statement or a solution is most of what somebody fishing wanted to know. The
+rule is one function, `mayRead`, called by the home's list _and_ by the article page, so
+they cannot disagree.
+
+**The program lives in the library and every offering shows it** (F15). Units are typed once
+and group the offering's articles (F13). An offering reordering or hiding units _for itself_
+is deferred to F14 with the `offering_unit` table it needs — see F15 for why, and for why
+deferring it makes propagation stronger rather than weaker. **`PUT …/program` never
+deletes**: a teacher saving a list they loaded before a colleague added a unit would
+otherwise wipe it, and by foreign key every article filed under it, with no version history
+to recover from.
+
+**A slug is set once** (F32) and is rejected rather than repaired: `checkSlug` refuses
+anything `slugify` would change, and says what to type instead. Silently normalizing would
+make two different titles collide into a 409 naming a slug neither author wrote. There is no
+rename, so there is no old slug to redirect from yet — when rename arrives it wants a
+`previous_slug` column, not a table. Archiving keeps the slug (the unique index is total),
+and re-creating it revives that row, so one typo does not burn a URL forever.
 
 ## Doctor
 

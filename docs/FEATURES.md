@@ -132,7 +132,7 @@ re-argued per item):
 
 ### F4 · Anonymous read
 
-- [x] **Status:** decided
+- [x] **Status:** built (slice 5)
 - **Decision:** Published articles and offering homes are public. Login is needed only for
   marks, revision requests, notifications and anything editable. The old campus was
   effectively public for content, and campus.ort links to articles for people who aren't
@@ -141,6 +141,17 @@ re-argued per item):
   (the default) or _enrolled students and staff only_. That covers exam statements and
   solutions. A per-offering switch was rejected because offerings are almost always
   public and an exception is almost always a single article.
+
+  **Built 2026-09-20.** `offering_article.restricted` is a **boolean**, not a status column:
+  F4 decides exactly two values and campus's schema holds no `pgEnum` anywhere. Two things
+  settled by building it:
+  - **An article nobody may read is absent, not forbidden.** Both public routes answer
+    **404**, never 403 — a 403 confirms the article exists, which for an exam statement or a
+    solution is most of what somebody fishing wanted to know.
+  - **The rule is one function**, `mayRead` in `api/src/offerings/content.ts`, called by the
+    home's article list _and_ by the article's own page, so the two cannot disagree about
+    what a visitor may see. Staff read past both the publish date and `restricted`, which is
+    why there is no preview mode to build.
 
 ### F5 · Roles and permissions, derived from the directory
 
@@ -216,7 +227,7 @@ strong` stays in `verify.ts`, so there is no second credential gate either.
 
 ### F7 · Articles are Markdown, stored in the database
 
-- [x] **Status:** decided
+- [x] **Status:** built (slice 5)
 - **Decision:** Teachers write Markdown in an in-app editor with live preview. There is a
   fixed component set, carried over by _function_ from the old `components/articles/`:
   callout (`ImportantBox`), code block, inline code, download, image button. Publishing
@@ -227,9 +238,14 @@ strong` stays in `verify.ts`, so there is no second credential gate either.
   MDX-style tags were rejected because they look like arbitrary JSX, which invites
   teachers to try it.
 
+  **Built 2026-09-20.** The api **stores and serves the Markdown source verbatim and parses
+  nothing** — no `remark`, no `remark-directive`, no dependency. The allowlist and the
+  component set are the renderer's, because the alternative is a server that owns how
+  content looks (F44). `article_version.body` in, the same bytes out.
+
 ### F8 · Subject library, used by offerings
 
-- [x] **Status:** decided
+- [x] **Status:** built (slice 5)
 - **Decision:** An article belongs to a **subject's library**, which persists across years.
   An offering _uses_ an article, and the use carries the per-offering facts: publish date,
   unit, due date, and grading metadata (F18). Next year's offering reuses the library
@@ -238,6 +254,15 @@ strong` stays in `verify.ts`, so there is no second credential gate either.
   **One published version:** publishing a library article updates it everywhere it is used,
   past years included. Pinning a version per offering was rejected: propagation is the
   reason the library exists.
+
+  **Built 2026-09-20.** `campus.offering_article` is the use. Two things it settled:
+  - **Publishing really is moving a pointer.** `publish` writes
+    `article.published_version_id` and nothing else, so every offering using the article —
+    past years included — serves the new text on the next request, with no per-offering row
+    to update and no deploy.
+  - **An offering may only use its own subject's articles.** Otherwise the library would
+    have a second, invisible way to share content across subjects, which is the thing
+    `templateId` did badly.
 
 ### F9 · Uploads
 
@@ -259,9 +284,14 @@ strong` stays in `verify.ts`, so there is no second credential gate either.
 
 ### F11 · Drafts and revision history
 
-- [x] **Status:** decided
+- [x] **Status:** built (slice 5)
 - **Decision:** An article has a draft and a published version. Every publish keeps a
   revision, and any revision can be restored as the new draft.
+
+  **Built 2026-09-20.** **There is no restore endpoint**, and that is the whole of it:
+  restoring is `GET …/versions/:id` followed by `PUT …/draft` with that body. A verb of its
+  own would name something the client already has two calls for. The revision list comes
+  back inline from the article read, because without it there is nothing to restore _from_.
 
 ### F12 · Several teachers editing
 
@@ -272,7 +302,7 @@ strong` stays in `verify.ts`, so there is no second credential gate either.
 
 ### F13 · Units
 
-- [x] **Status:** decided
+- [x] **Status:** built (slice 5)
 - **Decision:** An offering groups the articles it uses into ordered units, and those units
   are the **program's units** (F15). The home's article section (F14) renders them in that
   order.
@@ -280,6 +310,9 @@ strong` stays in `verify.ts`, so there is no second credential gate either.
 ---
 
 ## Group D — Homes
+
+**Built 2026-09-20.** `offering_article.program_unit_id` points at the **library's** unit
+directly. See F15 for why there is no per-offering copy of the units yet.
 
 ### F14 · One configured home per offering
 
@@ -301,12 +334,45 @@ strong` stays in `verify.ts`, so there is no second credential gate either.
 
 ### F15 · Program
 
-- [x] **Status:** decided
+- [x] **Status:** built (slice 5), except per-offering reorder and hide
 - **Decision:** **Structured:** an ordered list of units, each with a title and Markdown
   contents. The same units group the offering's articles (F13), so they are typed once.
   **The program lives in the subject library** and is reused every year, like articles
   (F8). An offering starts from it and can reorder or hide units for itself, so a fix to
   the library program reaches every year's offerings.
+
+  **Built 2026-09-20, with one half deliberately deferred.** The library program is built:
+  `program_unit` has its reader and writer, and every offering of the subject shows those
+  units, in that order, with articles filed under them (F13).
+
+  **An offering reordering or hiding units for itself is deferred to F14**, and this is a
+  change of plan worth stating rather than discovering. It needs an `offering_unit` table —
+  the offering's own row per unit, carrying `position`, `hidden` and a title override — and
+  that is a _home configuration_ control, which is exactly what F14's screen is. Building it
+  now would also have cost the thing it was supposed to protect: a unit's id would be
+  `program_unit.id` when untouched and `offering_unit.id` once overridden, so every client
+  would branch on which kind it got, for a control no screen offers yet.
+
+  **Deferring it does not weaken the propagation F15 exists for — it strengthens it.** With
+  no per-offering copy, a unit renamed or rewritten in the library reaches every year's
+  offerings immediately, and so does a unit _added_ to the library after an offering was
+  activated. A copy made at activation, which is what F34 literally described, would have
+  missed both.
+
+  When F14 lands, the migration is one `INSERT … SELECT` over the distinct
+  `(offering_home, program_unit)` pairs already in use, plus an `offering_unit_id` on
+  `offering_article`.
+
+  **Rejected while building:** materialising `offering_unit` rows lazily — on the first
+  override or the first article filed under a unit — which keeps propagation but pays the
+  discriminated-id cost above for a feature with no screen. Worth revisiting _with_ F14, not
+  before it.
+
+  **Also settled:** the whole-list `PUT` that writes the program **never deletes**. A teacher
+  who loads the program and saves it after a colleague has added a unit would otherwise wipe
+  that unit, and by foreign key every article filed under it — silently, and with no version
+  history to recover from, unlike an article (F11). Removing a unit is its own `DELETE`,
+  which refuses with a `409` while any offering still files articles under it.
 
 ### F16 · Calendar
 
@@ -527,9 +593,20 @@ strong` stays in `verify.ts`, so there is no second credential gate either.
   activation** — it carries no default sections yet, because F14's sections and links have
   no reader. Both operations are idempotent: an admin who clicks twice, or who activates
   what a colleague already did, has not made a mistake, and a 409 would be a state the
-  client has to interpret before it can tell the person their action worked. Deactivation
-  is a `DELETE` while there is nothing under a home to orphan; when F14 hangs sections on
-  it, that becomes `archived_at` (F36).
+  client has to interpret before it can tell the person their action worked.
+
+  **Amended 2026-09-20 (slice 5), on both deferred points.**
+  - **Deactivation is now `archived_at`** (F36), as this item said it would become. The
+    condition it named has been met: `offering_article` hangs off the home, and F37 hangs
+    `result` off that and `revision_request` off `result`, so a `DELETE` behind an
+    idempotent admin button would take a teacher's work with it, and a cascade would
+    eventually take students' marks. Re-activating clears the flag and keeps everything.
+  - **"Activation creates the home with the subject library's program" is satisfied by
+    writing nothing.** An activated offering shows the library's program (F15) because the
+    read derives it from `program_unit`, not because activation copied it. Same outcome for
+    zero rows, and strictly better: a unit added to the library _after_ an offering was
+    activated reaches it too, which a copy would have missed. Default **sections** remain
+    F14's, and remain unbuilt.
 
 ### F35 · Past years: public and read-only
 
@@ -572,23 +649,23 @@ worked example).
   implicit because the migrator derives `campus_app`'s grants from whatever is in the
   schema barrel, so a table nobody wrote down is still a table that exists.
 
-  | Table              | Holds                                                                                                                                   | Key references                                                                   |
-  | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-  | `article`          | library article: subject, slug, title, `published_version_id`, `draft_version_id`, `archived_at` (F7, F8, F11)                          | → `public.subject`                                                               |
-  | `article_version`  | one saved body: Markdown source, author, created_at (F11)                                                                               | → `article`, `public."user"`                                                     |
-  | `program_unit`     | the subject's program: title, Markdown contents, position (F15)                                                                         | → `public.subject`                                                               |
-  | `offering_home`    | **built (slice 4)** — activation only so far; the section list, the links and the slug fallback arrive with F14 and F32 (F14, F34)      | → `public.offering`                                                              |
-  | `offering_unit`    | the offering's copy of the program units: title, position, `hidden` (F13, F15)                                                          | → `offering_home`, `program_unit` (nullable)                                     |
-  | `offering_article` | an offering's **use** of an article: unit, position, publish date, visibility (F4), and the grading fields when it is an activity (F18) | → `offering_home`, `article`, `offering_unit`, `offering_group`, `offering_term` |
-  | `redo_covers`      | which uses a redo covers (F23)                                                                                                          | → `offering_article` ×2                                                          |
-  | `result`           | one student's result for one activity (F38)                                                                                             | → `public."user"`, `offering_article`                                            |
-  | `official_grade`   | hand-entered term grade: value, observation, suggestion (F22)                                                                           | → `public."user"`, `offering_term`                                               |
-  | `revision_request` | reason, bonus tasks, teacher answer, resolved (F29)                                                                                     | → `result`, `public."user"`                                                      |
-  | `notification`     | user, kind, target, `read_at` (F30)                                                                                                     | → `public."user"`                                                                |
-  | `upload`           | id, subject, uploader, filename, media type, size, sha256 (F9)                                                                          | → `public.subject`, `public."user"`                                              |
-  | `audit_event`      | append-only: actor, action, target, before/after (F41)                                                                                  | → `public."user"`                                                                |
-  | `session`          | one signed-in person: mapped claims, refresh token, `claims_at`, hard cap, CSRF token (F3)                                              | → `public."user"`                                                                |
-  | `login_flow`       | the `state` and PKCE verifier between `/api/auth/login` and its callback, 600 s (F3)                                                    | —                                                                                |
+  | Table              | Holds                                                                                                                                                                                   | Key references                                                                                         |
+  | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+  | `article`          | library article: subject, slug, title, `published_version_id`, `draft_version_id`, `archived_at` (F7, F8, F11)                                                                          | → `public.subject`                                                                                     |
+  | `article_version`  | one saved body: Markdown source, author, created_at (F11)                                                                                                                               | → `article`, `public."user"`                                                                           |
+  | `program_unit`     | the subject's program: title, Markdown contents, position (F15)                                                                                                                         | → `public.subject`                                                                                     |
+  | `offering_home`    | **built (slice 4)** — activation and `archived_at` (F36); the section list, the links and the slug fallback arrive with F14 and F32                                                     | → `public.offering`                                                                                    |
+  | `offering_unit`    | the offering's copy of the program units: title, position, `hidden` — **deferred to F14**, see F15 (F13, F15)                                                                           | → `offering_home`, `program_unit` (nullable)                                                           |
+  | `offering_article` | **built (slice 5)** — an offering's **use** of an article: unit, position, publish date, visibility (F4). The grading fields arrive with F18, and `offering_unit_id` with F14 (see F15) | → `offering_home`, `article`, `program_unit`; later `offering_unit`, `offering_group`, `offering_term` |
+  | `redo_covers`      | which uses a redo covers (F23)                                                                                                                                                          | → `offering_article` ×2                                                                                |
+  | `result`           | one student's result for one activity (F38)                                                                                                                                             | → `public."user"`, `offering_article`                                                                  |
+  | `official_grade`   | hand-entered term grade: value, observation, suggestion (F22)                                                                                                                           | → `public."user"`, `offering_term`                                                                     |
+  | `revision_request` | reason, bonus tasks, teacher answer, resolved (F29)                                                                                                                                     | → `result`, `public."user"`                                                                            |
+  | `notification`     | user, kind, target, `read_at` (F30)                                                                                                                                                     | → `public."user"`                                                                                      |
+  | `upload`           | id, subject, uploader, filename, media type, size, sha256 (F9)                                                                                                                          | → `public.subject`, `public."user"`                                                                    |
+  | `audit_event`      | append-only: actor, action, target, before/after (F41)                                                                                                                                  | → `public."user"`                                                                                      |
+  | `session`          | one signed-in person: mapped claims, refresh token, `claims_at`, hard cap, CSRF token (F3)                                                                                              | → `public."user"`                                                                                      |
+  | `login_flow`       | the `state` and PKCE verifier between `/api/auth/login` and its callback, 600 s (F3)                                                                                                    | —                                                                                                      |
 
   The bytes of an upload live on the volume at a path derived from the id; the row is the
   index, which is what makes listing, quotas and garbage collection possible. Serving a file

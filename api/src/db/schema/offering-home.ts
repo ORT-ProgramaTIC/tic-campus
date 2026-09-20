@@ -14,17 +14,19 @@ import { directoryOfferingTable, directoryUserTable } from "./directory.js";
  * has not written yet. So an admin says which offerings are ours, and campus's
  * every public read joins through here.
  *
- * **It carries the activation and nothing else yet.** F37 describes it as
- * "activation, section list and order, links list, slug fallback": the sections
- * and the links are F14's and have no reader, and the slug fallback is F32's
+ * **It carries the activation and the offering's articles.** F37 also describes
+ * a section list and order, a links list and a slug fallback: the sections and
+ * the links are F14's and still have no reader, and the slug fallback is F32's
  * answer to a collision that does not exist. Each arrives with the feature that
  * reads it, in its own migration.
  *
- * Deactivation is a `DELETE` rather than a flag: there is nothing under a home
- * to orphan yet. When F14 hangs sections and links here, that stops being true
- * and `archivedAt` (F36) is what it becomes — which is why the F35 year lock
- * will want rows pointing at this id, and why the primary key is a uuid of its
- * own even though `offeringId` is already unique.
+ * **Deactivation is `archivedAt`, not a `DELETE`** (F36), since slice 5 —
+ * `offering_article` now hangs off this id, and F37 hangs `result` off that and
+ * `revision_request` off `result`. A `DELETE` behind an idempotent admin button
+ * would take a teacher's work with it, and a cascade would eventually take
+ * students' marks. Archiving is also why the primary key is a uuid of its own
+ * even though `offeringId` is already unique, and what the F35 year lock will
+ * point its rows at.
  */
 export const offeringHome = campus.table(
   "offering_home",
@@ -38,11 +40,16 @@ export const offeringHome = campus.table(
     activatedAt: timestamp("activated_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
-    /** Who said this offering is ours. Not nullable, and not an audit row: F41's
-     *  log is for what changes, and this changes once. */
+    /** Who said this offering is ours, as of the last time somebody did. Not
+     *  nullable, and not an audit row: F41's log is for what changes. */
     activatedBy: integer("activated_by")
       .notNull()
       .references(() => directoryUserTable.id),
+    /** Deactivated, keeping what is under it (F36). Every public read filters
+     *  on this being null; the row stays so an admin can undo it. */
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
   },
+  // Total, never partial: `ON CONFLICT (offering_id)` needs this as its target,
+  // and a `WHERE archived_at IS NULL` index is not one.
   (t) => [uniqueIndex("offering_home_offering_idx").on(t.offeringId)],
 );

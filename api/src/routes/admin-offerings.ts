@@ -106,12 +106,17 @@ export function createAdminOfferingRoutes(
     })();
   });
 
+  /**
+   * `archived`, not `removed`: since slice 5 the home stays and carries its
+   * `offering_article` rows with it (F36), so an admin who deactivates by
+   * mistake re-activates and the teacher's work is still there.
+   */
   router.delete("/:offeringId/activation", (req, res, next) => {
     void (async () => {
       try {
         const offeringId = offeringIdFrom(req.params.offeringId);
-        const removed = await deactivate(db, offeringId);
-        res.status(200).json({ offeringId, activated: false, removed });
+        const archived = await deactivate(db, offeringId);
+        res.status(200).json({ offeringId, activated: false, archived });
       } catch (cause) {
         next(cause);
       }

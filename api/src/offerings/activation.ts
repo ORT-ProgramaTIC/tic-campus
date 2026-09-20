@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { offeringHome } from "../db/schema/offering-home.js";
 
@@ -8,12 +8,15 @@ import { offeringHome } from "../db/schema/offering-home.js";
  * Both operations are **idempotent**, and that is the whole design: an admin
  * who clicks twice, or who activates something a colleague already did, has not
  * made a mistake, and a `409` would be a state a client has to interpret before
- * it can decide the person's action succeeded. Activating what is already
- * activated changes nothing and keeps the original `activated_by`, which is the
- * honest answer to who decided this.
+ * it can decide the person's action succeeded.
+ *
+ * **Deactivation archives** (F36). It was a `DELETE` while a home held nothing
+ * but its own existence; since slice 5 it has `offering_article` rows under it,
+ * which are a teacher's work. Re-activating clears the flag and keeps them.
  */
 
-/** `false` when there was already a home — the caller's own action was a no-op. */
+/** `false` when the offering was already active — the caller's own action was a
+ *  no-op. Re-activating an archived home counts as the caller's doing. */
 export async function activate(
   db: Db,
   offeringId: number,
@@ -24,18 +27,42 @@ export async function activate(
     .values({ offeringId, activatedBy })
     .onConflictDoNothing({ target: offeringHome.offeringId })
     .returning({ id: offeringHome.id });
-  return inserted.length > 0;
+  if (inserted.length > 0) return true;
+
+  // A second statement rather than `onConflictDoUpdate`, which always returns a
+  // row and would make the answer above permanently `true` — and that boolean
+  // is what the route ships as `created`. The `isNotNull` is what keeps an
+  // already-active home a no-op instead of a fresh activation.
+  const revived = await db
+    .update(offeringHome)
+    .set({ archivedAt: null, activatedBy, activatedAt: sql`now()` })
+    .where(
+      and(
+        eq(offeringHome.offeringId, offeringId),
+        isNotNull(offeringHome.archivedAt),
+      ),
+    )
+    .returning({ id: offeringHome.id });
+  return revived.length > 0;
 }
 
 /**
- * A `DELETE`, because there is nothing under a home to orphan yet. When F14
- * hangs sections and links here that stops being true, and this becomes
- * `archived_at` (F36) — see the note on the table.
+ * `false` when it was not active to begin with.
+ *
+ * The `isNull` in the `WHERE` is load-bearing: without it a second call
+ * re-stamps `archivedAt`, which throws away *when* the offering was archived —
+ * the one fact a flag has over a `DELETE` — and answers `true` for a no-op.
  */
 export async function deactivate(db: Db, offeringId: number): Promise<boolean> {
-  const removed = await db
-    .delete(offeringHome)
-    .where(eq(offeringHome.offeringId, offeringId))
+  const archived = await db
+    .update(offeringHome)
+    .set({ archivedAt: sql`now()` })
+    .where(
+      and(
+        eq(offeringHome.offeringId, offeringId),
+        isNull(offeringHome.archivedAt),
+      ),
+    )
     .returning({ id: offeringHome.id });
-  return removed.length > 0;
+  return archived.length > 0;
 }

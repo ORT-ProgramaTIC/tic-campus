@@ -1,4 +1,4 @@
-import { and, eq, or, sql, type SQL } from "drizzle-orm";
+import { and, eq, isNull, or, sql, type SQL } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import {
   directoryCourse,
@@ -105,7 +105,13 @@ function activated(db: Db, where: SQL) {
   return db
     .select(COLUMNS)
     .from(directoryOffering)
-    .innerJoin(offeringHome, eq(offeringHome.offeringId, directoryOffering.id))
+    .innerJoin(
+      offeringHome,
+      and(
+        eq(offeringHome.offeringId, directoryOffering.id),
+        isNull(offeringHome.archivedAt),
+      ),
+    )
     .innerJoin(
       directorySubject,
       eq(directorySubject.id, directoryOffering.subjectId),
@@ -163,7 +169,13 @@ export async function listMine(
   const rows = await db
     .select({ ...COLUMNS, teaches, studies })
     .from(directoryOffering)
-    .innerJoin(offeringHome, eq(offeringHome.offeringId, directoryOffering.id))
+    .innerJoin(
+      offeringHome,
+      and(
+        eq(offeringHome.offeringId, directoryOffering.id),
+        isNull(offeringHome.archivedAt),
+      ),
+    )
     .innerJoin(
       directorySubject,
       eq(directorySubject.id, directoryOffering.subjectId),
@@ -225,7 +237,10 @@ export async function listForAdmin(
   const rows = await db
     .select({
       ...COLUMNS,
-      activated: sql<boolean>`${offeringHome.id} is not null`,
+      // Archived counts as not activated, but the join stays plain: filtering
+      // archived rows out of the `leftJoin` itself would lose the home an admin
+      // needs to re-activate, and this list exists to offer exactly that.
+      activated: sql<boolean>`${offeringHome.id} is not null and ${offeringHome.archivedAt} is null`,
     })
     .from(directoryOffering)
     .leftJoin(offeringHome, eq(offeringHome.offeringId, directoryOffering.id))

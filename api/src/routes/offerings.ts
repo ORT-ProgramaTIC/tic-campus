@@ -7,11 +7,12 @@ import {
   listMine,
   resolveBySlug,
 } from "../offerings/catalog.js";
+import { homeContent, readableArticle } from "../offerings/content.js";
 
 /**
  * The public face of an offering (F6, F32).
  *
- * All three routes are mounted whether or not a login is configured: campus's
+ * All four routes are mounted whether or not a login is configured: campus's
  * content is public (F4), and `/mine` answers 401 rather than 404 because the
  * session middleware is what refuses it — an unconfigured client secret makes
  * `/api/auth/*` disappear, not these.
@@ -116,12 +117,75 @@ export function createOfferingRoutes(
               offering.subjectId,
             )
           : NONE;
-        res.status(200).json({ ...offering, can });
+        const content = await homeContent(
+          db,
+          offering.offeringId,
+          offering.subjectId,
+          can,
+        );
+        res.status(200).json({ ...offering, can, ...content });
       } catch (cause) {
         next(cause);
       }
     })();
   });
 
+  /**
+   * The fourth segment: one article of one offering (F32).
+   *
+   * Public, like the home it hangs off (F4) — with two exceptions that both
+   * answer **404 rather than 403**: a use whose `publishedAt` has not arrived,
+   * and one marked `restricted`. A 403 would confirm the article is there,
+   * which for an exam statement or a solution is most of what somebody
+   * fishing wanted to know.
+   *
+   * **The body is the published version**, never the draft, so every offering
+   * using the article reads the same text (F8). It is Markdown exactly as the
+   * teacher typed it: the directives are the renderer's to understand (F7).
+   */
+  router.get(
+    "/:year/:subject/:offering/:article",
+    maybeSession,
+    (req, res, next) => {
+      void (async () => {
+        try {
+          const year = yearFrom(req.params.year);
+          if (year === undefined) throw notFound();
+          const offering = await resolveBySlug(
+            db,
+            year,
+            String(req.params.subject),
+            String(req.params.offering),
+          );
+          if (!offering) throw notFound();
+
+          const session = req.session;
+          const can = session
+            ? await capabilitiesFor(
+                db,
+                actorFrom(session.record.userId, session.record.claims),
+                offering.offeringId,
+                offering.subjectId,
+              )
+            : NONE;
+          const found = await readableArticle(
+            db,
+            offering.offeringId,
+            String(req.params.article),
+            can,
+          );
+          if (!found) throw notFound();
+          res.status(200).json({ ...found, can });
+        } catch (cause) {
+          next(cause);
+        }
+      })();
+    },
+  );
+
   return router;
+}
+
+function notFound(): ApiError {
+  return new ApiError(404, "not_found", "No encontramos esa página.");
 }

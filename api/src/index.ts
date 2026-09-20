@@ -14,6 +14,8 @@ import { errorHandler, notFound } from "./middleware/errors.js";
 import { optionalSession, requireSession } from "./middleware/session.js";
 import { createAdminOfferingRoutes } from "./routes/admin-offerings.js";
 import { createAuthRoutes, createMeRoute } from "./routes/auth.js";
+import { createHomeContentRoutes } from "./routes/home-content.js";
+import { createLibraryRoutes } from "./routes/library.js";
 import { createOfferingRoutes } from "./routes/offerings.js";
 
 const config = loadConfig();
@@ -162,12 +164,30 @@ if (config.auth) {
   app.get("/api/me", guard, createMeRoute(config.auth));
 }
 
+/**
+ * The first body parser campus has had — slice 5 is the first slice that takes
+ * one (F7's Markdown, F15's program). Below the health routes on purpose, so a
+ * liveness probe never walks it, and below `/api/auth/*`, whose routes have no
+ * JSON body either.
+ *
+ * **1 MB, and deliberately not F9's 20 MB.** That cap is for uploaded files, on
+ * a multipart route that does not exist yet and will bring its own limit. The
+ * biggest body here is an article: kilobytes of Markdown. The only thing that
+ * gets past Express's 100 kB default is a pasted base64 image, which is the
+ * exact case F9 exists to take somewhere else.
+ */
+app.use(express.json({ limit: "1mb" }));
+
 // Public (F4), so mounted whatever the login's state. The two guards go in
 // together because one route inside needs a session and one merely offers it —
 // applying `maybeSession` to the whole router instead would read and renew the
 // session twice for `/mine`.
 app.use("/api/offerings", createOfferingRoutes(db, { guard, maybeSession }));
 app.use("/api/admin/offerings", createAdminOfferingRoutes(db, guard));
+// The subject's library (F8), and what one offering does with it (F4, F8, F13).
+// `/api/homes` rather than `/api/offerings/:id/…`: see the note in its file.
+app.use("/api/subjects", createLibraryRoutes(db, guard));
+app.use("/api/homes", createHomeContentRoutes(db, guard));
 
 // Last, and in this order: anything that reached here matched no route, and
 // anything thrown by one of them lands in the handler.

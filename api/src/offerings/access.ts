@@ -101,26 +101,10 @@ export async function capabilitiesFor(
       .limit(1),
   );
 
-  // Teaching *this* offering is teaching its subject, so the join below only
+  // Teaching *this* offering is teaching its subject, so the probe below only
   // has to run for somebody who does not.
-  const teachesSubject =
-    teachesOffering ||
-    (await exists(
-      db
-        .select({ one: directoryTeacherOffering.id })
-        .from(directoryTeacherOffering)
-        .innerJoin(
-          directoryOffering,
-          eq(directoryOffering.id, directoryTeacherOffering.offeringId),
-        )
-        .where(
-          and(
-            eq(directoryTeacherOffering.teacherId, actor.userId),
-            eq(directoryOffering.subjectId, subjectId),
-          ),
-        )
-        .limit(1),
-    ));
+  const editsLibrary =
+    teachesOffering || (await teachesSubject(db, actor, subjectId));
 
   const enrolled = await exists(
     db
@@ -136,10 +120,43 @@ export async function capabilitiesFor(
   );
 
   return {
-    editLibrary: teachesSubject,
+    editLibrary: editsLibrary,
     manageOffering: teachesOffering,
     seeOwnMarks: enrolled,
   };
+}
+
+/**
+ * `editLibrary` on its own (F5, F8) — teaching **any** offering of a subject,
+ * in any year, is what earns the right to edit that subject's library.
+ *
+ * The library routes have a subject and no offering, and `capabilitiesFor`
+ * needs both: handing it a sentinel id would run the offering and enrolment
+ * probes against nothing and return a three-key answer whose other two keys
+ * mean nothing. This is the same query it runs, not a second rule.
+ */
+export async function teachesSubject(
+  db: Db,
+  actor: Actor,
+  subjectId: number,
+): Promise<boolean> {
+  if (actor.isAdmin) return true;
+  return exists(
+    db
+      .select({ one: directoryTeacherOffering.id })
+      .from(directoryTeacherOffering)
+      .innerJoin(
+        directoryOffering,
+        eq(directoryOffering.id, directoryTeacherOffering.offeringId),
+      )
+      .where(
+        and(
+          eq(directoryTeacherOffering.teacherId, actor.userId),
+          eq(directoryOffering.subjectId, subjectId),
+        ),
+      )
+      .limit(1),
+  );
 }
 
 /** Nobody signed in is nobody: the public reads still need a shape to project. */
