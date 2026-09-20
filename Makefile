@@ -13,7 +13,7 @@ DB_CONTAINER ?= tic-db
 # compose does check its `file:` sources, but only on `up` — by which point the
 # old container is gone and the message is about a path rather than about the
 # install step that was missed.
-MOUNTED_SECRETS ?= secrets/db_svc_password
+MOUNTED_SECRETS ?= secrets/db_svc_password secrets/tic_auth_client_secret
 
 # Migrations run as the schema OWNER, never as the runtime role. campus_svc is a
 # member of campus_app, which holds DML on `campus` and deliberately no CREATE —
@@ -56,7 +56,8 @@ rollout:  ## the half of `deploy` after the pull — not called directly
 	@for f in $(MOUNTED_SECRETS); do \
 	  test -r "$$f" || { \
 	    echo "FAIL: cannot read $$f — tic-campus-api mounts it and refuses to boot without it."; \
-	    echo "      Create it with \`install -m 0600 -o root -g root /dev/null $$f\` and paste campus_svc's password."; exit 1; }; \
+	    echo "      Create it with \`install -m 0600 -o root -g root /dev/null $$f\` and paste the credential."; \
+	    echo "      campus_svc's password, or tic-auth's client secret — README, 'El login'."; exit 1; }; \
 	done
 	docker compose build
 	docker compose up -d
@@ -107,6 +108,20 @@ smoke:  ## through tic-proxy with the real Host header, not around it
 	@curl -fsS -H 'Host: $(HOST)' $(SMOKE_BASE)/api/readyz | grep -q '"status":"ok"' \
 	  && echo "ok: /api/readyz — tic-db as campus_svc, migraciones al día" \
 	  || { echo "FAIL: /api/readyz — see \`docker logs tic-campus-api\` and \`curl -H 'Host: $(HOST)' $(SMOKE_BASE)/api/readyz\`"; exit 1; }
+	@# The unauthenticated half of the login, which is still proof the route is
+	@# mounted: 401 means the session middleware answered, 404 means the four
+	@# routes are not there at all — which is what an unconfigured client secret
+	@# looks like, deliberately (CLIENTS.md §8).
+	@test "$$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: $(HOST)' $(SMOKE_BASE)/api/me)" = 401 \
+	  && echo "ok: /api/me contesta 401 sin sesión" \
+	  || { echo "FAIL: /api/me no contestó 401 — si contesta 404 falta secrets/tic_auth_client_secret"; exit 1; }
+	@# **A `kid`, never a 200.** The JWKS goes through tic-proxy with a Host
+	@# header, and that header fails soft: omit it and nginx's default server
+	@# answers 200 with a body that is not a key set. Asked with the api's own
+	@# probe, so this and the application cannot disagree about "reachable".
+	@docker compose exec -T api node dist/scripts/check-jwks.js >/dev/null \
+	  && echo "ok: tic-campus-api lee el JWKS de tic-auth por tic-proxy" \
+	  || { echo "FAIL: no se pudo leer el JWKS — \`docker compose exec api node dist/scripts/check-jwks.js\`"; exit 1; }
 
 # This stack's own diagnosis, in tic-host's contract (README, "Doctor"). Plain python3 on
 # the host: the docker socket is what a process inside the containers cannot see.

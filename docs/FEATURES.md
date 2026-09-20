@@ -83,7 +83,7 @@ re-argued per item):
 
 ### F3 · Login, through tic-auth
 
-- [x] **Status:** decided
+- [x] **Status:** built (slice 3)
 - **Prior art:** `tic-auth/docs/CLIENTS.md`, with `MEV/api/src/auth/` as the TypeScript
   reference implementation.
 - **Decision:** Campus is a confidential tic-auth client. The api does the code exchange,
@@ -93,6 +93,42 @@ re-argued per item):
   The URL-fragment JWT, `jwtSecureCode` rotation, the student token, `X-Student-Token` and
   the Safari ITP workarounds are all dropped: they existed only because of the embed and
   the cross-site Vercel backend.
+
+  **Built 2026-09-19.** `api/src/auth/` is MEV's shape — `jwks.ts`, `verify.ts`,
+  `token-client.ts`, `cookies.ts`, `session-store.ts`, `refresh.ts` — with four routes in
+  `api/src/routes/auth.ts` and the CSRF check inside `middleware/session.ts`. Five things
+  were settled by building it rather than by arguing them:
+
+  - **The session is a table**, `campus.session` (F37), not Redis and not a sealed cookie.
+    `CLIENTS.md` §4 allows any of the three. Redis would be a container to back up and
+    monitor for one feature; a sealed cookie would need a fourth hand-placed key and would
+    make the 60 s memo of a rotated refresh token mandatory rather than optional, since the
+    request that never received its `Set-Cookie` otherwise presents a spent token. The
+    stored id is `sha256(cookie value)`, so tic-platform's nightly dump carries no session
+    anybody can present.
+  - **`acr == "strong"` lives in the verifier**, not in a middleware, because campus judges
+    a credential in exactly one place: it gates on being signed in and on nothing else.
+    There is no role gate here and there should not be one — students, teachers and admins
+    all use campus, and its content is public anyway (F4). `roles[]` is carried in the
+    session for F5 to read.
+  - **The single-flight is an in-process `Map`**, keyed by session id. tic-auth revokes the
+    whole refresh family on a replay, so two requests on one stale session must make one
+    `/token` call; one container means one process, and tic-host's `RefreshCoordinator`
+    reaches the same conclusion for the same reason. A second replica moves the lock into
+    `SELECT … FOR UPDATE` on the session row, which is a thing a table can do and a cookie
+    cannot.
+  - **Express 5 arrived with this slice**, which was the cheapest moment: two routes before
+    it, six after.
+  - **No dev-login stub**, deferred rather than dropped: nothing consumes a session yet, and
+    `tools/mock_oidc.py` gives a laptop a real round trip. When one is added it is
+    `CLIENTS.md` §8's — registered only when the client secret is unconfigured, 404 when it
+    is, never both, `refresh_token = null`.
+
+  The hostname is **`tic-campus.ort.edu.ar`** and was never really open: `tic-host`'s
+  `config.toml` declares `[origins.tic-campus]` against it as the contract this compose has
+  to meet, the DNS alias already resolves to the VM, and `campus.ort.edu.ar` is the old
+  campus running until December 2026. So the redirect URI is
+  `https://tic-campus.ort.edu.ar/api/auth/callback`.
 
 ### F4 · Anonymous read
 
@@ -477,7 +513,10 @@ worked example).
 
 - [x] **Status:** decided
 - **Decision:** Thirteen tables, plus the four F39 names (`offering_group`,
-  `offering_term`, `offering_scale`, `offering_scale_level`).
+  `offering_term`, `offering_scale`, `offering_scale_level`), plus the two the login needs
+  (`session`, `login_flow`) — added 2026-09-19 with F3, and listed here rather than left
+  implicit because the migrator derives `campus_app`'s grants from whatever is in the
+  schema barrel, so a table nobody wrote down is still a table that exists.
 
   | Table              | Holds                                                                                                                                   | Key references                                                                   |
   | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
@@ -494,6 +533,8 @@ worked example).
   | `notification`     | user, kind, target, `read_at` (F30)                                                                                                     | → `public."user"`                                                                |
   | `upload`           | id, subject, uploader, filename, media type, size, sha256 (F9)                                                                          | → `public.subject`, `public."user"`                                              |
   | `audit_event`      | append-only: actor, action, target, before/after (F41)                                                                                  | → `public."user"`                                                                |
+  | `session`          | one signed-in person: mapped claims, refresh token, `claims_at`, hard cap, CSRF token (F3)                                              | → `public."user"`                                                                |
+  | `login_flow`       | the `state` and PKCE verifier between `/api/auth/login` and its callback, 600 s (F3)                                                    | —                                                                                |
 
   The bytes of an upload live on the volume at a path derived from the id; the row is the
   index, which is what makes listing, quotas and garbage collection possible. Serving a file

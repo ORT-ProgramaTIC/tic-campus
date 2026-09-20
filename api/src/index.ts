@@ -1,10 +1,17 @@
-import { createServer } from "node:http";
 import { count } from "drizzle-orm";
+import express from "express";
+import { createRemoteKeySource } from "./auth/jwks.js";
+import { createRenewer } from "./auth/refresh.js";
+import { createSessionStore } from "./auth/session-store.js";
+import { createTokenClient } from "./auth/token-client.js";
+import { createVerifier } from "./auth/verify.js";
 import { loadConfig } from "./config.js";
 import { createDb, createPool } from "./db/client.js";
 import { bundledMigrationCount } from "./db/migrate.js";
 import { campus } from "./db/schema/_schema.js";
 import { directorySubject } from "./db/schema/directory.js";
+import { requireSession } from "./middleware/session.js";
+import { createAuthRoutes, createMeRoute } from "./routes/auth.js";
 
 const config = loadConfig();
 const pool = createPool(config);
@@ -74,36 +81,69 @@ async function schemaCurrent(): Promise<{
   }
 }
 
-const server = createServer((req, res) => {
-  const json = (status: number, body: unknown) => {
-    res.writeHead(status, { "content-type": "application/json" });
-    res.end(JSON.stringify(body));
-  };
-  // Liveness, and deliberately database-free: the healthcheck restarts this
-  // container, and restarting it does not fix a database that is down.
-  if (req.url === "/api/health") return json(200, { status: "ok" });
-  if (req.url === "/api/readyz") {
-    // Both facts, each under its own key, because they fail for different
-    // reasons and are fixed by different people: `db` is tic-platform's
-    // database and this stack's secrets, `migrations` is `make migrate`.
-    // `bin/doctor.py` reads one key each, so a stale schema does not get
-    // reported as an unreachable database.
-    void Promise.all([directoryReadable(), schemaCurrent()]).then(
-      ([db, migrations]) => {
-        const ok = db.ok && migrations.ok;
-        json(ok ? 200 : 503, {
-          status: ok ? "ok" : "error",
-          db,
-          migrations,
-        });
-      },
-    );
-    return;
-  }
-  res.writeHead(404).end();
+const app = express();
+
+// Liveness, and deliberately database-free: the healthcheck restarts this
+// container, and restarting it does not fix a database that is down.
+app.get("/api/health", (_req, res) => {
+  res.status(200).json({ status: "ok" });
 });
 
-server.listen(config.port, () =>
+app.get("/api/readyz", (_req, res, next) => {
+  // Both facts, each under its own key, because they fail for different reasons
+  // and are fixed by different people: `db` is tic-platform's database and this
+  // stack's secrets, `migrations` is `make migrate`. `bin/doctor.py` reads one
+  // key each, so a stale schema does not get reported as an unreachable
+  // database. tic-auth is deliberately NOT a third key — see `auth/jwks.ts`.
+  void Promise.all([directoryReadable(), schemaCurrent()])
+    .then(([db, migrations]) => {
+      const ok = db.ok && migrations.ok;
+      res.status(ok ? 200 : 503).json({
+        status: ok ? "ok" : "error",
+        db,
+        migrations,
+      });
+    })
+    .catch(next);
+});
+
+/**
+ * The login, mounted **only when there is a client secret to log in with**.
+ *
+ * Unconfigured, the four routes simply do not exist and Express answers 404 —
+ * not 401 and not 503, either of which advertises a login that cannot complete
+ * and invites a client to keep trying it (`CLIENTS.md` §8). In production there
+ * is no such state: `loadConfig` refuses to return without the secret.
+ */
+if (config.auth) {
+  const store = createSessionStore(db);
+  const verify = createVerifier({
+    issuer: config.auth.issuer,
+    audience: config.auth.audience,
+    keySource: createRemoteKeySource({
+      url: config.auth.jwksUrl,
+      hostHeader: config.auth.jwksHostHeader,
+    }),
+  });
+  const tokens = createTokenClient(config.auth);
+  const renewer = createRenewer({
+    config: config.auth,
+    store,
+    tokens,
+    verify,
+  });
+  // One guard, built once and shared: it carries the freshness rule and the CSRF
+  // check, and two of them would be two chances to mount a route with only one.
+  const guard = requireSession({ config, store, renewer });
+
+  app.use(
+    "/api/auth",
+    createAuthRoutes(config, config.auth, guard, { store, verify, tokens }),
+  );
+  app.get("/api/me", guard, createMeRoute(config.auth));
+}
+
+const server = app.listen(config.port, () =>
   console.log(`tic-campus-api on :${config.port}`),
 );
 

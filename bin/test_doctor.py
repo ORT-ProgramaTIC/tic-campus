@@ -167,6 +167,24 @@ class TestChecks(unittest.TestCase):
         self.assertEqual(schema(self._NO_DB, rc=1), ["fail"])
         self.assertEqual(schema("Not Found", rc=1), ["fail"])
 
+    def test_auth_reachable_asserts_a_kid_and_never_a_status(self) -> None:
+        def auth(out: str, rc: int = 0) -> list[str]:
+            ctx = Ctx(
+                run=_box({"docker exec tic-campus-api node dist/scripts/check-jwks.js": Completed(rc, out, "")}),
+                root=doctor.ROOT,
+            )
+            return _severities(doctor.check_auth_reachable(ctx))
+
+        self.assertEqual(auth('{"ok":true,"url":"http://tic-proxy/.well-known/jwks.json","kids":["a1"]}'), ["ok"])
+        # The Host header did not reach tic-proxy: its default server answers 200 with a
+        # body that is not a key set, which is why the probe fails on the `kid` and not on
+        # the status — and why this check reads its verdict and not node's exit code.
+        self.assertEqual(auth('{"ok":false,"error":"contestó, pero sin ninguna clave"}', rc=1), ["fail"])
+        # No client secret: the login routes are not even mounted.
+        self.assertEqual(auth('{"ok":false,"error":"falta TIC_AUTH_CLIENT_SECRET_FILE"}', rc=1), ["fail"])
+        # Anything that is not JSON at all, including a container that has no such script.
+        self.assertEqual(auth("Cannot find module", rc=1), ["fail"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -26,6 +26,8 @@ services:
     secrets:
       - source: db_svc_password
         target: /run/secrets/db_svc_password
+      - source: tic_auth_client_secret
+        target: /run/secrets/tic_auth_client_secret
     # `tic-db` for the database; the edge network is how tic-proxy reaches the
     # stack. `web` stays off `tic-db`: nginx has no business there.
     networks: [tic-campus-edge, tic-db]
@@ -64,6 +66,16 @@ networks:
 # `secrets/db_owner_password` is deliberately NOT here: migrations run on the
 # host as `campus_owner` and that file never enters a container, so mounting it
 # would widen its reach for nothing.
+#
+# **Both of these are `root:root 0600`, and that is a property of the Dockerfile
+# rather than of the secrets.** Outside swarm a compose secret is a bind mount
+# with ownership preserved (`uid`/`gid`/`mode` here are swarm-only and silently
+# ignored), so the owner has to be whichever uid actually opens the file —
+# `docker/api/Dockerfile` sets no `USER`, so that is root. Adding one means
+# chowning these in the same commit, or this stack meets tic-auth's 2026-09-03
+# outage from the other direction (DEPLOY-CONVENTIONS.md §4).
 secrets:
   db_svc_password:
     file: ./secrets/db_svc_password
+  tic_auth_client_secret:
+    file: ./secrets/tic_auth_client_secret

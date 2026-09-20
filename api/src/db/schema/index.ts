@@ -10,3 +10,4 @@
 // `public."user"` in a campus migration.
 export * from "./article.js";
 export * from "./program-unit.js";
+export * from "./session.js";

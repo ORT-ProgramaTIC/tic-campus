@@ -33,14 +33,19 @@ deliberately is not. Four roles, two of them created by hand at install time
 `CREATE` anywhere, and migrations run as **`campus_owner`** from the host. Reads of people,
 courses and offerings go to tic-auth's `directory.*` views; campus owns no roster.
 
-Three files live only on the box, all root-owned 0600 and gitignored: `.env` (from
-`.env.example`), `secrets/db_svc_password` and `secrets/db_owner_password`. The first two
-are what the container needs and `make deploy` refuses before rolling if either is missing,
-or if `tic-db` is not healthy; the third is read on the host by `make migrate` and never
-enters a container.
+Four files live only on the box, all root-owned 0600 and gitignored: `.env` (from
+`.env.example`), `secrets/db_svc_password`, `secrets/tic_auth_client_secret` and
+`secrets/db_owner_password`. The first three are what the container needs and `make deploy`
+refuses before rolling if any is missing, or if `tic-db` is not healthy; the last is read on
+the host by `make migrate` and never enters a container.
 
-Campus owns three tables so far — the article library and the program units
-(`api/src/db/schema/`, `docs/FEATURES.md` F37). Schema changes are Drizzle migrations:
+`root:root` on the two mounted secrets is a property of `docker/api/Dockerfile` rather than
+of the secrets: it sets no `USER`, so root is the uid that opens them. Adding one means
+chowning both in the same commit (`../DEPLOY-CONVENTIONS.md` §4).
+
+Campus owns five tables so far — the article library, the program units and the two the
+login needs (`api/src/db/schema/`, `docs/FEATURES.md` F37). Schema changes are Drizzle
+migrations:
 
 ```sh
 make migrate        # `make deploy` already does this, after the roll
@@ -53,7 +58,74 @@ is what says so.
 `/api/health` is liveness and says nothing about the database — restarting the container
 does not fix a database that is down. `/api/readyz` is the one that reads `directory.*` and
 counts the applied migrations against the ones this build carries, and answers 503 naming
-which of the two failed.
+which of the two failed. It deliberately says nothing about tic-auth either: that is a
+network hop off this box, and `auth-reachable` in the doctor is where it is asked.
+
+## El login
+
+Campus is a **confidential tic-auth client** (`docs/FEATURES.md` F3,
+`tic-auth/docs/CLIENTS.md`). The browser only ever talks to this origin: `tic-campus-api`
+does the code exchange with a client secret, keeps the tokens in `campus.session` behind an
+HttpOnly cookie, and refreshes them on the person's behalf.
+
+```
+GET  /api/auth/login?next=/donde     302 -> tic-auth /authorize
+GET  /api/auth/callback              canje, verificación, Set-Cookie, 302 -> next
+GET  /api/me                         401, o { me, csrf_token, idp_logout_url }
+POST /api/auth/logout                revoca, limpia, 200 { idp_logout_url }
+```
+
+**Registering the client is a step on tic-auth's box, not here**, and it happens once,
+before the first deploy that has this code. As root in `/opt/tic-auth` — `issue-secret`
+**must** run in the `app` container, the only one with the real pepper, and it prints the
+secret **once**:
+
+```sh
+docker compose exec -T app python -m scripts.manage_clients register \
+  --client-id tic-campus --name "Campus TIC" \
+  --audience tic-campus --audience tic-directory \
+  --confidential \
+  --redirect-uri https://tic-campus.ort.edu.ar/api/auth/callback \
+  --grant authorization_code --grant refresh_token \
+  --home-uri https://tic-campus.ort.edu.ar/
+docker compose exec -T app python -m scripts.manage_clients check-redirect \
+  --client-id tic-campus --uri 'https://tic-campus.ort.edu.ar/api/auth/callback'
+umask 077
+docker compose exec -T app python -m scripts.manage_clients issue-secret \
+  --client-id tic-campus --name 'campus api' --days 365 --quiet 2>/dev/null \
+  > /opt/tic-campus/secrets/tic_auth_client_secret
+chmod 600 /opt/tic-campus/secrets/tic_auth_client_secret
+```
+
+Every flag is load-bearing. `--confidential` because a public client with the code grant is
+a browser doing its own exchange, which is the design `CLIENTS.md` retires.
+`--grant refresh_token` is **opt-in and never implied** by `authorization_code` — without it
+campus gets a fifteen-minute token and nothing to renew it with, and signs everyone out
+every fifteen minutes. The first `--audience` is the default a request naming none gets, so
+the order is meaning. `--home-uri` needs its trailing slash. No `--scope` at all: campus
+reads the directory over SQL, and `narrow_scopes` refuses a scope the client is not
+registered for rather than dropping it quietly.
+
+The redirect URI is matched **byte for byte**, at `/authorize` and again at `/token`, which
+is why it is static configuration and never derived from a request: nginx is `listen 80`
+behind two proxies, so a derived scheme is always `http`. When the callback lands on an
+error page instead, `check-redirect` prints the index of the first differing character.
+
+Without `secrets/tic_auth_client_secret` the four routes above do not exist — 404, never 401
+or 503, so nothing loops through a login that cannot complete — and in production the
+container refuses to boot at all.
+
+### Off the box
+
+`tic-auth.ort.edu.ar` is unreachable from a laptop, so the login is driven against
+**tic-host's `tools/mock_oidc.py`** (`make dev-auth` there, `127.0.0.1:8899`). Point
+`TIC_AUTH_ISSUER`, `TIC_AUTH_INTERNAL_BASE_URL` and `TIC_AUTH_JWKS_URL` at it.
+
+It proves the round trip and **not** the refusals: it never reads `code_challenge` or
+`code_verifier`, never validates `client_id`, `client_secret` or `redirect_uri`, mints a
+token for an unknown `code`, and hardcodes `acr: "strong"`. Everything it cannot test —
+`acr=campus`, `alg: none`, HS256 confusion, a wrong audience, the `Host` header, the
+single-flight — is in `api/test/auth-*.test.mjs`, signed against a locally generated key.
 
 ## Doctor
 
@@ -69,12 +141,13 @@ read by `tic-platform/bin/tic-doctor` from its `STACKS` table. Python 3, stdlib 
 executable file: on the box Node exists only inside the containers. Every finding is
 `platform`; exit 1 only on a `fail`. Off the box every check `skip`s and it exits 0.
 
-| Check                | What moves it                                                                                                                                                                                                  |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `containers-settled` | **fail** a container named in `docker-compose.yml` is missing, not `running` across three reads, or `unhealthy` (the api's is `/api/health`) · **warn** health `starting`, or a restart within the last minute |
-| `web-api-proxy`      | **fail** `/api/health` asked inside `tic-campus-web` does not come back from the api — the nginx hop neither healthcheck covers                                                                                |
-| `db-reachable`       | **fail** the `db` half of `/api/readyz`, asked inside `tic-campus-api`, is not ok — the stack is up and cannot serve anything that needs data, which no healthcheck notices                                    |
-| `schema-current`     | **fail** the database has fewer migrations applied than this build carries — `make deploy` rolled and `make migrate` was skipped or failed, so the new routes run against an old schema                        |
+| Check                | What moves it                                                                                                                                                                                                                                                                  |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `containers-settled` | **fail** a container named in `docker-compose.yml` is missing, not `running` across three reads, or `unhealthy` (the api's is `/api/health`) · **warn** health `starting`, or a restart within the last minute                                                                 |
+| `web-api-proxy`      | **fail** `/api/health` asked inside `tic-campus-web` does not come back from the api — the nginx hop neither healthcheck covers                                                                                                                                                |
+| `db-reachable`       | **fail** the `db` half of `/api/readyz`, asked inside `tic-campus-api`, is not ok — the stack is up and cannot serve anything that needs data, which no healthcheck notices                                                                                                    |
+| `schema-current`     | **fail** the database has fewer migrations applied than this build carries — `make deploy` rolled and `make migrate` was skipped or failed, so the new routes run against an old schema                                                                                        |
+| `auth-reachable`     | **fail** `tic-campus-api` cannot read tic-auth's key set through tic-proxy — the stack is up and nobody can sign in. It asserts a `kid` and **never** a 200: the `Host` header fails soft, and without it nginx's default server answers 200 with a body that is not a key set |
 
 Left to tic-platform, because a stack checks only what it deploys: `/opt/tic-campus`'s git
 drift, `tic-campus-edge` membership, and the origin through tic-proxy (which `make smoke`

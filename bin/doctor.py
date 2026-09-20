@@ -484,6 +484,49 @@ def check_schema_current(ctx: Ctx) -> list[Finding]:
     ]
 
 
+def check_auth_reachable(ctx: Ctx) -> list[Finding]:
+    """¿Llega la api al key set de tic-auth, por tic-proxy, con el header `Host` que hace que
+    tic-proxy conteste como tic-auth?
+
+    Sin esto el stack está entero y nadie puede iniciar sesión: los tokens se verifican
+    contra esas claves, así que el login falla en el paso que ya gastó el código.
+
+    **Se afirma un `kid`, nunca un 200.** El header `Host` falla en silencio — si no llega,
+    nginx contesta 200 desde su server por defecto con algo que no es un key set, y el
+    primer síntoma es un error de parseo a varias capas de la causa. Lo pregunta el mismo
+    probe que usa `make smoke` (`dist/scripts/check-jwks.js`), así que el chequeo y la
+    aplicación no pueden discrepar sobre qué quiere decir "llega"."""
+    subject = Subject.container(API)
+    done = ctx.in_container(API, "node", "dist/scripts/check-jwks.js")
+    detail = _first_line(done.out) or _first_line(done.err) or f"node salió {done.rc}"
+    try:
+        body = json.loads(done.out)
+    except json.JSONDecodeError:
+        body = None
+    if isinstance(body, dict) and body.get("ok"):
+        kids = body.get("kids") or []
+        return [
+            ok(
+                f"tic-campus-api lee el JWKS de tic-auth ({len(kids)} clave(s): {', '.join(kids)})",
+                subject=subject,
+            )
+        ]
+    if isinstance(body, dict) and body.get("error"):
+        detail = _first_line(str(body["error"]))
+    return [
+        fail(
+            f"tic-campus-api no pudo leer el JWKS de tic-auth ({detail}), así que el stack "
+            "está arriba y nadie puede iniciar sesión",
+            remedy=(
+                "revisá TIC_AUTH_JWKS_URL y TIC_AUTH_JWKS_HOST_HEADER en .env (va por "
+                "http://tic-proxy, no por https://tic-auth.ort.edu.ar) y que "
+                "secrets/tic_auth_client_secret exista; docker logs tic-campus-api"
+            ),
+            subject=subject,
+        )
+    ]
+
+
 CheckFn = Callable[[Ctx], "list[Finding]"]
 
 
@@ -500,6 +543,7 @@ CHECKS: list[Check] = [
     Check("web-api-proxy", "proxy /api/ de tic-campus-web", check_web_api_proxy),
     Check("db-reachable", "acceso de la api a tic-db", check_db_reachable),
     Check("schema-current", "migraciones aplicadas en el schema campus", check_schema_current),
+    Check("auth-reachable", "acceso de la api al JWKS de tic-auth", check_auth_reachable),
 ]
 
 assert len({check.id for check in CHECKS}) == len(CHECKS), "duplicate check id in CHECKS"
