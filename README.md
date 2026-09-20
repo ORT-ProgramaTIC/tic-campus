@@ -304,7 +304,7 @@ DELETE /api/subjects/:id/program/:unitId               staff     borrar una unid
 POST   /api/subjects/:id/uploads                       staff     subir un archivo: multipart, campo «file» (F9)
 GET    /api/subjects/:id/uploads                       staff     los archivos de la materia, del último al primero
 GET    /api/uploads/:id                                público   los bytes (F9)
-PUT    /api/homes/:oferta/articles/:articleId          staff     usarlo: unidad, orden, fecha, visibilidad (F4, F8)
+PUT    /api/homes/:oferta/articles/:articleId          staff     usarlo: unidad, orden, fecha, visibilidad y notas (F4, F8, F18)
 DELETE /api/homes/:oferta/articles/:articleId          staff     dejar de usarlo
 GET    /api/offerings/:año/:materia/:oferta            público   ahora con programa y artículos (F13, F15)
 GET    /api/offerings/:año/:materia/:oferta/:artículo  público   leer un artículo publicado (F4, F32)
@@ -383,6 +383,111 @@ make two different titles collide into a 409 naming a slug neither author wrote.
 rename, so there is no old slug to redirect from yet — when rename arrives it wants a
 `previous_slug` column, not a table. Archiving keeps the slug (the unique index is total),
 and re-creating it revives that row, so one typo does not burn a URL forever.
+
+## Las notas
+
+Everything above is content. The reason the old campus exists at all is marks, and this is
+the floor under them: what an offering **names** (F39), which of its articles are
+**activities** (F18), and what a student **got** (F38). The formula that turns results into
+a mark (F20, F40) is a slice of its own and is not here — none of it was reachable until
+these were rows, and nothing is stale for having waited, because computed marks are never
+stored.
+
+```
+GET    /api/homes/:oferta/gradebook                     staff     la grilla entera, de una (F26)
+PUT    /api/homes/:oferta/gradebook                     staff     grupos, trimestres y escalas — nunca borra (F39)
+DELETE /api/homes/:oferta/gradebook/groups/:id          staff     409 si tiene actividades adentro
+DELETE /api/homes/:oferta/gradebook/terms/:id           staff     idem
+DELETE /api/homes/:oferta/gradebook/scales/:id          staff     idem; se lleva sus niveles
+PUT    /api/homes/:oferta/results                       staff     guardar cada celda tocada, en una llamada (F38)
+GET    /api/homes/:oferta/results/mine                  sesión    mis notas publicadas (F24)
+```
+
+**Two routers, one prefix, one `guard`.** The gradebook hangs off `/api/homes` beside
+`home-content.ts`, for the reason that prefix exists — its segments are ids, not a public
+URL. What the two must not each have is their own `router.use(guard)`: a request for
+anything here would walk the other router's guard first, match nothing, and read and renew
+the session a second time on the way through. So the guard is on the mount, in `index.ts`.
+
+**`staff` here is `manageOffering`, and only that.** `editLibrary` is teaching _any_
+offering of the subject in _any_ year, which is the right gate for fixing a typo in an
+article and the wrong one for reading a class's marks. The two gates already differed for
+the library; this is the first place where the wider one is a refusal.
+
+**Una actividad es un artículo con metadatos de nota** (F18), on the _use_ and not on the
+library article — so the same TP is graded in one offering and practice-only in another.
+`value_type` not null is the whole of "is this graded": a theory note is an article
+without it. A term comes with it (F21), a scale exactly when the type is `scale`, and a
+group is optional, because an activity in no bucket is one the formula ignores.
+
+**No hay enums ni `CHECK` en `campus`, y eso no es descuido.** `value_type` is `text`
+checked in the api, beside `checkSlug` and `checkUnits`, because a value domain is one a
+single writer can enforce alone and the api is the only writer. The unique
+`(offering_home_id, name)` indexes in `gradebook.ts` are the opposite case and are
+therefore the database's: two concurrent saves cannot both check-then-insert. The cost is
+one real edge — swapping two group names in one save raises on the first `UPDATE`, and the
+answer is a `409` telling the teacher to save it in two steps rather than a rename through
+a temporary name campus invented.
+
+**Publicar el enunciado y publicar las notas son dos fechas** (F24). `published_at` decides
+when the article appears; `results_published_at` decides when its marks do. A teacher posts
+the TP statement on Monday and marks it on Friday. The rule is one function,
+`resultsVisible`, and it deliberately does **not** consult the article's own visibility:
+hiding a statement in October is not a request to take back September's marks, and a
+student watching them vanish could not tell that from a mistake.
+
+**Una celda vacía es una fila que no está.** `result.value` is `NOT NULL`, F20's "blank"
+already means a missing row, and a nullable value would be a second spelling of it for the
+evaluator to branch on. So `value: null` is the **only** way to clear a cell, and it is
+said out loud: `{"done": false}` is _not done_ and `{"value": 1}` is a one, and the obvious
+falsy check would have silently deleted both. An entry carrying none of `value`, `done` or
+`scaleLevelId` is a `400`, so "feedback only" is an error rather than a lost mark.
+
+**The whole-list `PUT` never deletes**, exactly like `PUT …/program` (F15) and for the same
+reason. `PUT …/results` is the other kind and does not need the rule: entries nobody sent
+are untouched, so there is no delete by omission to protect anyone from. What it does need
+is the check that every activity id in the body belongs to _this_ home — the route gates
+the offering in the path, and the ids come from the body.
+
+**Un resultado no lleva curso** (F38). The roster is joined live, the way every other read
+here does it, so a student who changes course in April does not change what they did in
+March. Enrolment is checked when a result is **created** and never again: the writable set
+is _enrolled now, plus whoever already carries a mark_, and the grid lists somebody who
+left flagged rather than hiding them — hiding them would hide the mark that still needs
+fixing. It reads `id`, `name` and `surname` and deliberately not `dni`; F27's import is
+where matching on a DNI belongs.
+
+**One read, and one write, whatever the size.** `GET …/gradebook` answers with the setup,
+the presets, the activities, the roster and the marks together, because the grid cannot
+draw a column header without the groups and a second round trip is a second thing that can
+disagree with the first. `PUT …/results` is one `insert … on conflict do update` for
+everything set and one `delete` for everything cleared. This is campus's first read that is
+N students × M activities, and `campus_svc` is capped at 15 connections against a pool of
+10 — a loop here is where that number stops being a comment.
+
+**`SCALE_PRESETS` viaja adentro de la lectura** and is **not a resource** (F42): there is no
+`GET /api/scale-presets` and there should not be. A teacher seeds a scale from one and what
+lands in `offering_scale` is the copy their offering owns, so editing a preset later reaches
+nobody — a mark already given does not move because somebody changed a word in the api.
+What a level is worth _can_ be changed, and then it moves the marks given on it, in the same
+transaction: a result stores the number and not the level, which is what keeps the future
+evaluator from branching per type.
+
+**Three refusals worth knowing before you hit them**, all `409`, all for the same reason —
+a foreign key would otherwise surface as a 500 on something a teacher can fix: a group,
+term or scale still referenced by an activity; an activity with marks being un-graded
+(`results_exist`); and an activity with marks being taken out of the offering
+(`activity_has_results`). The last two are on `PUT`/`DELETE /api/homes/:oferta/articles/…`,
+which is the article panel's route — that `PUT` writes the row **whole**, so a client
+sending half a panel saves half a panel, and this is the one case where that is not
+recoverable by saving again.
+
+**The grants.** `campus_app`'s DML comes from `db/migrate.ts` walking the schema barrel, so
+a table missing from `db/schema/index.ts` typechecks fine, migrates fine, and fails on its
+first write in production. `api/test/db.test.mjs` is the only place that ever exercises
+one: every call there goes through `campus_svc`, and a read proves nothing — the slice-7
+subtests insert, update and delete against each of the five new tables for exactly that
+reason.
 
 ## Doctor
 

@@ -15,6 +15,7 @@ import { errorHandler, notFound } from "./middleware/errors.js";
 import { optionalSession, requireSession } from "./middleware/session.js";
 import { createAdminOfferingRoutes } from "./routes/admin-offerings.js";
 import { createAuthRoutes, createMeRoute } from "./routes/auth.js";
+import { createGradebookRoutes } from "./routes/gradebook.js";
 import { createHomeContentRoutes } from "./routes/home-content.js";
 import { createLibraryRoutes } from "./routes/library.js";
 import { createOfferingRoutes } from "./routes/offerings.js";
@@ -199,7 +200,16 @@ app.use("/api/admin/offerings", createAdminOfferingRoutes(db, guard));
 // The subject's library (F8), and what one offering does with it (F4, F8, F13).
 // `/api/homes` rather than `/api/offerings/:id/…`: see the note in its file.
 app.use("/api/subjects", createLibraryRoutes(db, guard, config.uploadsDir));
-app.use("/api/homes", createHomeContentRoutes(db, guard));
+// Two routers, one prefix, and **one `guard` — on the mount and not inside
+// either of them**. A guard per router is a session read and renewal per router
+// a request walks past on its way to the one that matches, which for everything
+// the gradebook serves would be two.
+app.use(
+  "/api/homes",
+  guard,
+  createHomeContentRoutes(db),
+  createGradebookRoutes(db),
+);
 // The bytes of an upload (F9). Public, and with no session middleware at all:
 // every image in every article comes through here.
 app.use("/api/uploads", createUploadRoutes(db, config.uploadsDir));

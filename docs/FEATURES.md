@@ -446,7 +446,7 @@ directly. See F15 for why there is no per-offering copy of the units yet.
 
 ### F18 · An activity is an article
 
-- [x] **Status:** decided
+- [x] **Status:** built (slice 7)
 - **Decision:** A gradeable activity is an article whose **offering use** carries grading
   metadata. The library holds only content, so the same TP can be graded in one offering
   and practice-only in another. The metadata is: **group** (a teacher-named bucket such as
@@ -455,9 +455,32 @@ directly. See F15 for why there is no per-offering copy of the units yet.
   student's own result and due date. This replaces the `Contenidos` sheet, which joined the
   two by id convention.
 
+  **Built 2026-09-20.** Six nullable columns on `offering_article`:
+  `offering_group_id`, `offering_term_id`, `value_type`, `offering_scale_id`,
+  `due_at` and F24's `results_published_at`. Three things settled by building it:
+
+  - **An activity is a use with a `value_type`**, and that one `is not null` is
+    the whole of "is this graded" — there is no second flag and no separate
+    table. A term travels with it (F21), a scale is required exactly when the
+    type is `scale`, and a group is optional, because an activity in no bucket
+    is one F20's formula ignores and that is a thing a teacher may mean.
+  - **`value_type` is `text` checked in the api — no `pgEnum`, no `CHECK`.**
+    Campus's schema holds neither, the api is the only writer, and every other
+    value rule already lives there (`checkSlug`, `checkUnits`). That argument is
+    deliberately _not_ extended to F39's unique names: a value domain is one a
+    single writer can enforce alone, and uniqueness across two concurrent
+    writers is not.
+  - **The use `PUT` refuses to un-grade an activity that has marks**
+    (`409 results_exist`), and so does removing it from the offering
+    (`409 activity_has_results`). The row is written whole — a client sending
+    half a panel saves half a panel, which is how `position` has reset to 0
+    since slice 5 — and that is recoverable by saving again. Stranding `result`
+    rows on something that is no longer an activity is not, and unlike an
+    article (F11) there is no version history to bring them back.
+
 ### F19 · Value types
 
-- [x] **Status:** decided
+- [x] **Status:** built (slice 7)
 - **Decision:** Three types:
   - **Numeric**, 1–10 with decimals (today's TP marks).
   - **Done / not done** (today's class activities).
@@ -466,6 +489,16 @@ directly. See F15 for why there is no per-offering copy of the units yet.
     also define a **custom scale** on their offering.
 
   Pass/fail is not a type of its own: it is a two-step scale.
+
+  **Built 2026-09-20.** The three are the strings `numeric`, `done` and `scale`.
+  `SCALE_PRESETS` in `api/src/offerings/gradebook.ts` is the first of F42's
+  constants, and **the number each preset level maps to is written down there**
+  rather than left to whichever screen seeds from it: `B` 7, `MB` 8.5, `E` 10,
+  and `Desaprobado` 1 / `Aprobado` 7. It is a school decision, and a slice that
+  re-picked those numbers would be re-deciding it by accident. A preset is
+  copied into the offering's own `offering_scale` when a teacher seeds from it,
+  so editing a preset later reaches nobody — which is the point: a mark already
+  given does not move because somebody changed a word in the api.
 
 ### F20 · The mark formula
 
@@ -482,14 +515,32 @@ directly. See F15 for why there is no per-offering copy of the units yet.
   after the due date") was rejected: it would make due dates matter for grading, and F25
   says they don't.
 
+  **Deferred to its own slice, 2026-09-20 (slice 7).** The parser, the evaluator,
+  the save-time validator and the live preview are one piece of work, and none of
+  it was reachable until groups, terms, activities and results were rows. Nothing
+  was given up by waiting: F40 already says computed marks are never stored, so
+  there is no cache this slice could have invalidated. Two things that slice
+  inherits: **F39's name-versus-id obligation** below, and the fact that
+  `offering_term.formula` and `offering_home.final_formula` do not exist yet —
+  they arrive with the feature that reads them, the way F18's columns just did.
+  Also worth knowing before writing the evaluator: **a blank is an absent
+  `result` row and nothing else** (F38), so there is exactly one shape to skip.
+
 ### F21 · Terms and the final
 
-- [x] **Status:** decided
+- [x] **Status:** built (slice 7), except the dates and the formula
 - **Decision:** Every activity belongs to a term. The formula (F20) runs per term, and the
   final is a second formula over the term results. **Terms are defined per offering**: the
   teacher names them (and optionally dates them). That gives up comparing marks across
   offerings in exchange for fitting subjects that aren't split into trimestres (semester
   OPTIONAL offerings, Proyecto).
+
+  **Built 2026-09-20.** `offering_term` is a name and a position per offering,
+  and every activity carries one — `value_type` and `offering_term_id` are null
+  together or set together (F18). **It has no `starts_on`/`ends_on` and no
+  `formula`**: the optional dates have no reader until F16's calendar and the
+  formula is F40's, and a column arrives with the feature that reads it. The
+  final, being a second formula over the term results, is all F20's.
 
 ### F22 · Official term grade
 
@@ -507,12 +558,32 @@ directly. See F15 for why there is no per-offering copy of the units yet.
 
 ### F24 · Publishing and what students see
 
-- [x] **Status:** decided
+- [x] **Status:** built (slice 7), except the computed mark
 - **Decision:** Results are hidden until the teacher publishes the activity for the class,
   which replaces the per-row `Visible` column. Students see their published results, the
   feedback text on each, and their live computed mark.
   **The student's computed mark uses published activities only**, otherwise it would
   leak unpublished results. The teacher's preview (F20) shows both views side by side.
+
+  **Built 2026-09-20**, minus the live computed mark, which is F20's.
+  `GET /api/homes/:oferta/results/mine` is the student's half. Two things
+  settled by building it:
+
+  - **Publishing the statement and publishing the marks are two dates.**
+    `results_published_at` is a column of its own and not
+    `offering_article.published_at`, which decides when the _article_ appears
+    (F4). A teacher posts the TP statement on Monday and marks it on Friday, so
+    one flag cannot serve both. A `timestamptz` rather than a boolean, like
+    everything else here: F36 keeps _when_, and F30's "a result was published"
+    needs an instant to fire on.
+  - **The rule is one function, `resultsVisible`, and it is deliberately not
+    `mayRead`.** Two differences, both load-bearing. Staff here is
+    `manageOffering` alone — `editLibrary` is teaching _any_ offering of the
+    subject in any year, which is the right gate for fixing a typo in an article
+    and the wrong one for reading a class's marks. And the article's own
+    visibility is **not** consulted: a teacher who unpublishes a statement in
+    October has not asked to take back the marks they published in September,
+    and a student watching them vanish could not tell that from a mistake.
 
 ### F25 · Due dates and grading
 
@@ -520,6 +591,10 @@ directly. See F15 for why there is no per-offering copy of the units yet.
 - **Decision:** **Display only**: calendar, "vence en N días" and the 48 h notification
   (F30). Without submissions (F2), campus has no way of knowing when something was turned
   in, so a late flag would be a guess entered by hand.
+
+  **`due_at` exists since slice 7** (F18), on the offering's use of the article.
+  Nothing reads it yet; F16's calendar and F30's 48 h notification are what it
+  is for.
 
 ---
 
@@ -531,6 +606,11 @@ directly. See F15 for why there is no per-offering copy of the units yet.
 - **Decision:** A spreadsheet-like grid of students × activities per offering, with keyboard
   navigation, paste from the clipboard and a bulk "mark all done". It replaces the Sheets
   UX that teachers are used to. Only teachers of the offering and admins can open it (F5).
+
+  **The api half is built (slice 7)**: `GET /api/homes/:oferta/gradebook` is the
+  whole grid in one read — groups, terms, scales, the presets, the activities,
+  the roster and the marks — and `PUT …/results` saves every touched cell in one
+  call. The screen is a person's (F44); what this slice owes it is a shape.
 
 ### F27 · CSV / XLSX import and export
 
@@ -665,6 +745,12 @@ directly. See F15 for why there is no per-offering copy of the units yet.
   **The lock is automatic on a configured date**, 31 December by default. An admin can
   move that date or unlock a single offering for a late grade fix.
 
+  **Unbuilt as of slice 7, and now it has something to lock.** `PUT
+/api/homes/:oferta/results` checks `manageOffering` and the publish dates and
+  nothing about the year, so a 2026 offering's marks are writable today. The
+  lock is one check in `manageableHome` when it is built, and the date is one of
+  F42's constants.
+
 ---
 
 ## Group J — Data model
@@ -696,23 +782,26 @@ worked example).
   implicit because the migrator derives `campus_app`'s grants from whatever is in the
   schema barrel, so a table nobody wrote down is still a table that exists.
 
-  | Table              | Holds                                                                                                                                                                                   | Key references                                                                                         |
-  | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-  | `article`          | library article: subject, slug, title, `published_version_id`, `draft_version_id`, `archived_at` (F7, F8, F11)                                                                          | → `public.subject`                                                                                     |
-  | `article_version`  | one saved body: Markdown source, author, created_at (F11)                                                                                                                               | → `article`, `public."user"`                                                                           |
-  | `program_unit`     | the subject's program: title, Markdown contents, position (F15)                                                                                                                         | → `public.subject`                                                                                     |
-  | `offering_home`    | **built (slice 4)** — activation and `archived_at` (F36); the section list, the links and the slug fallback arrive with F14 and F32                                                     | → `public.offering`                                                                                    |
-  | `offering_unit`    | the offering's copy of the program units: title, position, `hidden` — **deferred to F14**, see F15 (F13, F15)                                                                           | → `offering_home`, `program_unit` (nullable)                                                           |
-  | `offering_article` | **built (slice 5)** — an offering's **use** of an article: unit, position, publish date, visibility (F4). The grading fields arrive with F18, and `offering_unit_id` with F14 (see F15) | → `offering_home`, `article`, `program_unit`; later `offering_unit`, `offering_group`, `offering_term` |
-  | `redo_covers`      | which uses a redo covers (F23)                                                                                                                                                          | → `offering_article` ×2                                                                                |
-  | `result`           | one student's result for one activity (F38)                                                                                                                                             | → `public."user"`, `offering_article`                                                                  |
-  | `official_grade`   | hand-entered term grade: value, observation, suggestion (F22)                                                                                                                           | → `public."user"`, `offering_term`                                                                     |
-  | `revision_request` | reason, bonus tasks, teacher answer, resolved (F29)                                                                                                                                     | → `result`, `public."user"`                                                                            |
-  | `notification`     | user, kind, target, `read_at` (F30)                                                                                                                                                     | → `public."user"`                                                                                      |
-  | `upload`           | id, subject, uploader, filename, media type, size, sha256 (F9)                                                                                                                          | → `public.subject`, `public."user"`                                                                    |
-  | `audit_event`      | append-only: actor, action, target, before/after (F41)                                                                                                                                  | → `public."user"`                                                                                      |
-  | `session`          | one signed-in person: mapped claims, refresh token, `claims_at`, hard cap, CSRF token (F3)                                                                                              | → `public."user"`                                                                                      |
-  | `login_flow`       | the `state` and PKCE verifier between `/api/auth/login` and its callback, 600 s (F3)                                                                                                    | —                                                                                                      |
+  | Table              | Holds                                                                                                                                                                                                                                                                 | Key references                                                                                         |
+  | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+  | `article`          | library article: subject, slug, title, `published_version_id`, `draft_version_id`, `archived_at` (F7, F8, F11)                                                                                                                                                        | → `public.subject`                                                                                     |
+  | `article_version`  | one saved body: Markdown source, author, created_at (F11)                                                                                                                                                                                                             | → `article`, `public."user"`                                                                           |
+  | `program_unit`     | the subject's program: title, Markdown contents, position (F15)                                                                                                                                                                                                       | → `public.subject`                                                                                     |
+  | `offering_home`    | **built (slice 4)** — activation and `archived_at` (F36); the section list, the links and the slug fallback arrive with F14 and F32                                                                                                                                   | → `public.offering`                                                                                    |
+  | `offering_unit`    | the offering's copy of the program units: title, position, `hidden` — **deferred to F14**, see F15 (F13, F15)                                                                                                                                                         | → `offering_home`, `program_unit` (nullable)                                                           |
+  | `offering_article` | **built (slice 5)**, grading fields **slice 7** — an offering's **use** of an article: unit, position, publish date, visibility (F4), and F18's group, term, value type, scale, due date and `results_published_at`. `offering_unit_id` still waits for F14 (see F15) | → `offering_home`, `article`, `program_unit`; later `offering_unit`, `offering_group`, `offering_term` |
+  | `offering_group`   | **built (slice 7)** — a teacher-named bucket: name, position (F20, F39)                                                                                                                                                                                               | → `offering_home`                                                                                      |
+  | `offering_term`    | **built (slice 7)** — a term of this offering: name, position; the dates and `formula` arrive with F16 and F40 (F21, F39)                                                                                                                                             | → `offering_home`                                                                                      |
+  | `offering_scale`   | **built (slice 7)** — a named ordered scale, plus `offering_scale_level` (name, number, position) (F19, F39)                                                                                                                                                          | → `offering_home`                                                                                      |
+  | `redo_covers`      | which uses a redo covers (F23)                                                                                                                                                                                                                                        | → `offering_article` ×2                                                                                |
+  | `result`           | **built (slice 7)** — one student's result for one activity (F38)                                                                                                                                                                                                     | → `public."user"`, `offering_article`                                                                  |
+  | `official_grade`   | hand-entered term grade: value, observation, suggestion (F22)                                                                                                                                                                                                         | → `public."user"`, `offering_term`                                                                     |
+  | `revision_request` | reason, bonus tasks, teacher answer, resolved (F29)                                                                                                                                                                                                                   | → `result`, `public."user"`                                                                            |
+  | `notification`     | user, kind, target, `read_at` (F30)                                                                                                                                                                                                                                   | → `public."user"`                                                                                      |
+  | `upload`           | id, subject, uploader, filename, media type, size, sha256 (F9)                                                                                                                                                                                                        | → `public.subject`, `public."user"`                                                                    |
+  | `audit_event`      | append-only: actor, action, target, before/after (F41)                                                                                                                                                                                                                | → `public."user"`                                                                                      |
+  | `session`          | one signed-in person: mapped claims, refresh token, `claims_at`, hard cap, CSRF token (F3)                                                                                                                                                                            | → `public."user"`                                                                                      |
+  | `login_flow`       | the `state` and PKCE verifier between `/api/auth/login` and its callback, 600 s (F3)                                                                                                                                                                                  | —                                                                                                      |
 
   The bytes of an upload live on the volume at a path derived from the id; the row is the
   index, which is what makes listing, quotas and garbage collection possible. ~~Serving a
@@ -724,7 +813,7 @@ worked example).
 
 ### F38 · A result is a record of what a student did
 
-- [x] **Status:** decided
+- [x] **Status:** built (slice 7)
 - **Decision:** `result` is `(student_id, offering_article_id, value, scale_level,
 feedback, recorded_by, recorded_at)`, unique on the first two. **It carries no course**:
   a result records that this person did this activity and got this, and a student who later
@@ -737,14 +826,64 @@ feedback, recorded_by, recorded_at)`, unique on the first two. **It carries no c
   scale level = its mapped number. `scale_level` keeps what the teacher actually picked, for
   display. A single aggregatable column is what keeps the evaluator from branching per type.
 
+  **Built 2026-09-20.** Four things settled by building it:
+
+  - **There is no blank result.** `value` is `NOT NULL` and clearing a cell
+    deletes the row, because F20's "blank" already means _a missing row_ — a
+    nullable value would be a second spelling of the same thing for the
+    evaluator to branch on. So `value: null` in a save is the **only** way to
+    empty a cell, said out loud: `{ "done": false }` is _not done_ and
+    `{ "value": 1 }` is a one, and a falsy check would have deleted both.
+  - **The unique index is declared `(offering_article_id, student_id)`**, the
+    other way round from the sentence above. The uniqueness is the same either
+    way, and this is the order every read goes in — from a home's activities to
+    their rows, never from a student — so one index does both jobs.
+  - **The enrolment check really is create-only, and that has two halves.** The
+    writable set is _enrolled now, plus whoever already carries a row here_, so
+    a teacher can still fix the mark of somebody who transferred out in April.
+    And the grid lists that person, flagged `enrolled: false`, rather than
+    hiding them — hiding one would hide the mark that still needs fixing.
+  - **A scale level's number is copied in at write time**, which is what makes
+    the one aggregatable column true. The consequence is that moving `MB` from 8
+    to 9 has to move the marks given on it, so `writeSetup` rewrites them in the
+    same transaction. Without that the display would change and the mark would
+    not.
+
 ### F39 · Groups, terms and scales are rows
 
-- [x] **Status:** decided
+- [x] **Status:** built (slice 7)
 - **Decision:** `offering_group` (F20), `offering_term` (F21) and `offering_scale` +
   `offering_scale_level` (F19) are tables per offering, each with a name and a position, and
   an activity references them by id. Renaming a group then touches neither the activities nor
   the formula. Scales can also be seeded from global presets, which live in code rather than
   in a settings table.
+
+  **Built 2026-09-20, and amended on the sentence above.** ~~Renaming a group
+  then touches neither the activities nor the formula.~~ **It touches the
+  activities not, and the formula is not yet decided.** An activity does
+  reference a group by id, so renaming one moves nothing there. But F20's
+  formula spells `avg(tps)` — by _name_ — and there is no immutable key column
+  to spell instead. Slice 7 did not add one (nothing reads a formula yet, and a
+  column for a reader that does not exist is the thing F21's dates were left out
+  for), so **F20's slice has to settle it**, either with a `key` column
+  backfilled from these names in one statement, or with a rename that rewrites
+  the offering's formula text. It is written down here so that slice decides it
+  rather than discovering it.
+
+  Two more things settled by building it:
+
+  - **`name` is unique per offering, and that is the database's job.** Two
+    concurrent saves cannot both check-then-insert, which is exactly why this is
+    not the same question as F18's `value_type`. The cost is that swapping two
+    names is two `UPDATE`s and the first raises — answered with a `409
+duplicate_name` telling the teacher to save it in two steps, rather than a
+    rename through a temporary name campus invented.
+  - **The whole-list save never deletes**, F15's rule and for F15's reason, and
+    that extends down to a scale's **levels**: a level a result points at cannot
+    vanish under it. So levels are add-and-rename-only for now. A scale nothing
+    uses can be deleted whole and retyped; once an activity uses it, a spare
+    level stays in the dropdown. A per-level `DELETE` is the obvious fix the day
+    that annoys somebody, with the same `409` the other three deletes use.
 
 ### F40 · Formulas are text, validated on save
 
@@ -767,12 +906,24 @@ feedback, recorded_by, recorded_at)`, unique on the first two. **It carries no c
   Writing to tic-auth's `public.audit_event` is not an option — campus holds no privilege
   on it.
 
+  **Slice 7 made this concrete and did not build it.** A result is written by an
+  upsert, so `recorded_by` and `recorded_at` answer _who holds this mark now_,
+  not _who set it to 4_ — the previous marker is overwritten along with the
+  previous mark. That is the exact question this item exists for, and until
+  `audit_event` is built, nothing in campus can answer it.
+
 ### F42 · Admin-level values live in code, not a settings table
 
-- [x] **Status:** decided
+- [x] **Status:** partly built (slice 7)
 - **Decision:** The year-lock date (F35) and the global scale presets (F19) are constants in
   the api, overridable by environment where the box needs it. A settings table for two
   values would be a screen, a migration and a cache for something that changes once a year.
+
+  **Built 2026-09-20, the scales half.** `SCALE_PRESETS` is a constant in
+  `api/src/offerings/gradebook.ts`, served inside the gradebook read so a client
+  can offer "arrancá con ésta" — it is **not a resource** and there is
+  deliberately no `GET /api/scale-presets`. F35's year-lock date is still
+  nobody's.
 
 ---
 

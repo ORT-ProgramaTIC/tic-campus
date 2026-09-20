@@ -13,6 +13,7 @@ import {
   activeHome,
   homeContent,
   readableArticle,
+  removeUse,
   useArticle,
 } from "../dist/offerings/content.js";
 import {
@@ -29,6 +30,19 @@ import {
   readProgram,
   writeProgram,
 } from "../dist/library/program.js";
+import {
+  deleteGroup,
+  deleteScale,
+  deleteTerm,
+  readSetup,
+  SCALE_PRESETS,
+  writeSetup,
+} from "../dist/offerings/gradebook.js";
+import {
+  gradebook,
+  myResults,
+  saveResults,
+} from "../dist/offerings/results.js";
 import {
   listUploads,
   pathFor,
@@ -285,6 +299,18 @@ test(
     // relative to now because a literal year eventually stops being the past.
     const PUBLISHED = new Date(Date.now() - 86_400_000);
 
+    // A use with no grading metadata: a theory note, which is what every
+    // article was before slice 7 (F18). `useArticle` writes the whole row, so
+    // the half that is absent has to be spelled out rather than left off.
+    const NOT_GRADED = {
+      offeringGroupId: null,
+      offeringTermId: null,
+      valueType: null,
+      offeringScaleId: null,
+      dueAt: null,
+      resultsPublishedAt: null,
+    };
+
     // Ordered before the deactivation below, which archives `ids.current` and
     // is what every subtest above depends on not having happened yet.
 
@@ -351,6 +377,7 @@ test(
         position: 0,
         publishedAt: null,
         restricted: false,
+        ...NOT_GRADED,
       });
 
       // Filed but not published *here*: the teacher sees it, nobody else does.
@@ -378,6 +405,7 @@ test(
         position: 0,
         publishedAt: PUBLISHED,
         restricted: false,
+        ...NOT_GRADED,
       });
       const open = await homeContent(db, ids.current, ids.subject, NONE);
       assert.equal(open.articles.length, 1, "idempotent on (home, article)");
@@ -401,6 +429,7 @@ test(
         position: 0,
         publishedAt: PUBLISHED,
         restricted: true,
+        ...NOT_GRADED,
       });
 
       // Absent, not forbidden: a 403 would confirm the solution is there.
@@ -450,6 +479,7 @@ test(
           position: 0,
           publishedAt: PUBLISHED,
           restricted: false,
+          ...NOT_GRADED,
         });
         // A foreign-key violation would be a 500 about nothing the teacher did.
         await assert.rejects(
@@ -548,6 +578,651 @@ test(
         [saved.id],
       );
       assert.deepEqual(await listUploads(db, ids.proyecto), []);
+    });
+
+    // --- slice 7: the gradebook floor ----------------------------------------
+    // What the slices above left here: `tp-sql` exists (archived and revived,
+    // so it is published), the offering uses it under the "Consultas" unit with
+    // `publishedAt` in the past, and it is not an activity — no `valueType`.
+    //
+    // Every call below writes through `campus_svc`, which is the only thing
+    // that proves `campus_app` was granted DML on the five new tables: the
+    // schema barrel is what earns the grant, and a table missing from it
+    // typechecks fine and fails here with `permission denied`.
+    //
+    // Still ordered before the deactivation below.
+
+    /** The offering's own setup, re-read fresh, since most subtests want it. */
+    const setupNow = async () => {
+      const home = await activeHome(db, ids.current);
+      return { home, setup: await readSetup(db, home.homeId) };
+    };
+
+    await t.test("an offering names its groups, terms and scales", async () => {
+      const home = await activeHome(db, ids.current);
+      const written = await writeSetup(db, home.homeId, {
+        groups: [{ name: "tps" }, { name: "clase" }],
+        terms: [{ name: "Primer trimestre" }],
+        scales: [SCALE_PRESETS[0]],
+      });
+
+      assert.deepEqual(
+        written.groups.map((g) => [g.name, g.position]),
+        [
+          ["tps", 0],
+          ["clase", 1],
+        ],
+        "array order is position, and it is never client-supplied",
+      );
+      assert.equal(written.scales[0].name, "B / MB / E");
+      assert.deepEqual(
+        written.scales[0].levels.map((l) => l.name),
+        ["B", "MB", "E"],
+      );
+      // `numeric` comes back from node-postgres as a string unless the column
+      // says otherwise. This is the assertion that catches losing `mode`.
+      assert.equal(typeof written.scales[0].levels[0].value, "number");
+      assert.equal(written.scales[0].levels[1].value, 8.5);
+
+      // It never deletes (F15's rule): a teacher who loaded the panel before a
+      // colleague added the term saves without it, and it survives.
+      const after = await writeSetup(db, home.homeId, {
+        groups: [{ id: written.groups[0].id, name: "trabajos prácticos" }],
+        terms: [],
+        scales: [],
+      });
+      assert.equal(after.terms.length, 1, "the term nobody sent is still here");
+      assert.equal(after.scales.length, 1);
+      assert.equal(
+        after.groups.find((g) => g.id === written.groups[0].id).name,
+        "trabajos prácticos",
+        "renamed in place: the id an activity points at does not move",
+      );
+      assert.equal(after.groups.length, 2);
+
+      // An id from another offering would otherwise be reparented by the
+      // update, which is how a teacher renames somebody else's group.
+      await assert.rejects(
+        () =>
+          writeSetup(db, home.homeId, {
+            groups: [
+              { id: "00000000-0000-4000-8000-000000000000", name: "ajeno" },
+            ],
+            terms: [],
+            scales: [],
+          }),
+        /no es de esta materia/,
+      );
+    });
+
+    await t.test("two names cannot be swapped in one save", async () => {
+      // `(offering_home_id, name)` is unique, and the database checks each
+      // UPDATE as it lands — so a swap raises on the first of the two. The
+      // answer is a 409 that says what to do, not a rename through a temporary
+      // name campus invented.
+      const { home, setup } = await setupNow();
+      const [first, second] = setup.groups;
+      await assert.rejects(
+        () =>
+          writeSetup(db, home.homeId, {
+            groups: [
+              { id: first.id, name: second.name },
+              { id: second.id, name: first.name },
+            ],
+            terms: [],
+            scales: [],
+          }),
+        /en dos pasos/,
+      );
+      const rolled = await readSetup(db, home.homeId);
+      assert.deepEqual(
+        rolled.groups.map((g) => g.name),
+        setup.groups.map((g) => g.name),
+        "the whole save is one transaction, so a refusal changes nothing",
+      );
+    });
+
+    await t.test(
+      "an activity is an article with grading metadata",
+      async () => {
+        const { home, setup } = await setupNow();
+        const article = (await listLibrary(db, ids.subject)).find(
+          (a) => a.slug === "tp-sql",
+        );
+
+        // A theory note is an article without the metadata (F18), so a half-filled
+        // row is refused rather than stored as a third thing.
+        await assert.rejects(
+          () =>
+            useArticle(db, home.homeId, ids.subject, article.id, {
+              programUnitId: null,
+              position: 0,
+              publishedAt: PUBLISHED,
+              restricted: false,
+              ...NOT_GRADED,
+              valueType: "numeric",
+            }),
+          /trimestre/,
+          "every activity belongs to a term (F21)",
+        );
+        await assert.rejects(
+          () =>
+            useArticle(db, home.homeId, ids.subject, article.id, {
+              programUnitId: null,
+              position: 0,
+              publishedAt: PUBLISHED,
+              restricted: false,
+              ...NOT_GRADED,
+              valueType: "scale",
+              offeringTermId: setup.terms[0].id,
+            }),
+          /escala/,
+          "a scaled activity needs its scale",
+        );
+
+        await useArticle(db, home.homeId, ids.subject, article.id, {
+          programUnitId: null,
+          position: 0,
+          publishedAt: PUBLISHED,
+          restricted: false,
+          ...NOT_GRADED,
+          offeringGroupId: setup.groups[0].id,
+          offeringTermId: setup.terms[0].id,
+          valueType: "numeric",
+          dueAt: PUBLISHED,
+        });
+
+        const grid = await gradebook(db, home.homeId, ids.current);
+        assert.equal(grid.activities.length, 1);
+        assert.equal(grid.activities[0].valueType, "numeric");
+        assert.equal(grid.activities[0].articleId, article.id);
+        assert.equal(
+          grid.activities[0].resultsPublishedAt,
+          null,
+          "the statement is out; the marks are a separate date (F24)",
+        );
+        // The enrolled, and only them, until somebody leaves.
+        assert.deepEqual(
+          grid.students.map((s) => [s.surname, s.enrolled]),
+          [
+            ["Alumne", true],
+            ["Docente", true],
+          ],
+          "the teacher is enrolled in their own offering too",
+        );
+        assert.deepEqual(grid.results, []);
+      },
+    );
+
+    await t.test(
+      "a group, term or scale in use cannot be deleted",
+      async () => {
+        const { home, setup } = await setupNow();
+        // A foreign-key violation would be a 500 about nothing the teacher did.
+        await assert.rejects(
+          () => deleteGroup(db, home.homeId, setup.groups[0].id),
+          /actividades/,
+        );
+        await assert.rejects(
+          () => deleteTerm(db, home.homeId, setup.terms[0].id),
+          /actividades/,
+        );
+
+        // One nothing points at goes, which is also the DELETE grant.
+        const spare = setup.groups.find((g) => g.name === "clase");
+        await deleteGroup(db, home.homeId, spare.id);
+        const left = await readSetup(db, home.homeId);
+        assert.equal(left.groups.length, 1);
+        await assert.rejects(
+          () => deleteGroup(db, home.homeId, spare.id),
+          /No encontramos/,
+        );
+      },
+    );
+
+    await t.test("a result is one row per student and activity", async () => {
+      const { home, setup } = await setupNow();
+      const grid = await gradebook(db, home.homeId, ids.current);
+      const activity = grid.activities[0].id;
+      const cell = { studentId: ids.student, activityId: activity };
+
+      await saveResults(
+        db,
+        home.homeId,
+        [{ ...cell, clear: false, value: 8.5, feedback: "muy bien" }],
+        ids.teacher,
+      );
+      let marks = (await gradebook(db, home.homeId, ids.current)).results;
+      assert.equal(marks.length, 1);
+      assert.equal(typeof marks[0].value, "number", "numeric mode again");
+      assert.equal(marks[0].value, 8.5);
+      assert.equal(marks[0].recordedBy, ids.teacher);
+
+      // Unique on (activity, student): saving again overwrites, it does not
+      // accumulate, and the marker becomes whoever set it last.
+      await saveResults(
+        db,
+        home.homeId,
+        [{ ...cell, clear: false, value: 9, feedback: null }],
+        ids.admin,
+      );
+      marks = (await gradebook(db, home.homeId, ids.current)).results;
+      assert.equal(marks.length, 1);
+      assert.equal(marks[0].value, 9);
+      assert.equal(marks[0].feedback, null);
+      assert.equal(marks[0].recordedBy, ids.admin);
+
+      // A cleared cell is a row that is not there (F20's "blank"), not a row
+      // with a null in it.
+      await saveResults(
+        db,
+        home.homeId,
+        [{ ...cell, clear: true, feedback: null }],
+        ids.teacher,
+      );
+      assert.deepEqual(
+        (await gradebook(db, home.homeId, ids.current)).results,
+        [],
+      );
+
+      // Put it back for the subtests below.
+      await saveResults(
+        db,
+        home.homeId,
+        [{ ...cell, clear: false, value: 9, feedback: "muy bien" }],
+        ids.teacher,
+      );
+      assert.ok(setup.terms[0]);
+    });
+
+    await t.test("a result refuses what is not this offering's", async () => {
+      const { home } = await setupNow();
+      const grid = await gradebook(db, home.homeId, ids.current);
+      const activity = grid.activities[0].id;
+
+      // Enrolment is checked when a result is created (F38). NR5E is served by
+      // no offering, so this student is enrolled in nothing at all.
+      await assert.rejects(
+        () =>
+          saveResults(
+            db,
+            home.homeId,
+            [
+              {
+                studentId: ids.orphanStudent,
+                activityId: activity,
+                clear: false,
+                value: 8,
+                feedback: null,
+              },
+            ],
+            ids.teacher,
+          ),
+        /no cursa/,
+      );
+
+      // The route gates the offering in the path; the activity ids come from
+      // the body. Without this a teacher writes marks onto another offering's
+      // activity.
+      await assert.rejects(
+        () =>
+          saveResults(
+            db,
+            home.homeId,
+            [
+              {
+                studentId: ids.student,
+                activityId: "00000000-0000-4000-8000-000000000000",
+                clear: false,
+                value: 8,
+                feedback: null,
+              },
+            ],
+            ids.teacher,
+          ),
+        /no es de esta materia/,
+      );
+
+      // And the value has to be the kind the activity asks for.
+      await assert.rejects(
+        () =>
+          saveResults(
+            db,
+            home.homeId,
+            [
+              {
+                studentId: ids.student,
+                activityId: activity,
+                clear: false,
+                done: true,
+                feedback: null,
+              },
+            ],
+            ids.teacher,
+          ),
+        /1 a 10/,
+      );
+    });
+
+    await t.test(
+      "done and a scale land in the same numeric column",
+      async () => {
+        const { home, setup } = await setupNow();
+        const scale = setup.scales[0];
+        const term = setup.terms[0];
+
+        const asistencia = await createArticle(
+          db,
+          ids.subject,
+          "clase-3",
+          "Clase 3",
+        );
+        const oral = await createArticle(db, ids.subject, "oral", "Oral");
+        const use = (articleId, extra) =>
+          useArticle(db, home.homeId, ids.subject, articleId, {
+            programUnitId: null,
+            position: 1,
+            publishedAt: PUBLISHED,
+            restricted: false,
+            ...NOT_GRADED,
+            offeringTermId: term.id,
+            ...extra,
+          });
+        await use(asistencia.id, { valueType: "done" });
+        await use(oral.id, { valueType: "scale", offeringScaleId: scale.id });
+
+        const grid = await gradebook(db, home.homeId, ids.current);
+        const bySlug = new Map(grid.activities.map((a) => [a.slug, a]));
+        const mb = scale.levels.find((l) => l.name === "MB");
+
+        await saveResults(
+          db,
+          home.homeId,
+          [
+            {
+              studentId: ids.student,
+              activityId: bySlug.get("clase-3").id,
+              clear: false,
+              done: false,
+              feedback: null,
+            },
+            {
+              studentId: ids.student,
+              activityId: bySlug.get("oral").id,
+              clear: false,
+              scaleLevelId: mb.id,
+              feedback: null,
+            },
+          ],
+          ids.teacher,
+        );
+
+        const marks = new Map(
+          (await gradebook(db, home.homeId, ids.current)).results.map((r) => [
+            r.activityId,
+            r,
+          ]),
+        );
+        assert.equal(
+          marks.get(bySlug.get("clase-3").id).value,
+          0,
+          "not done is 0, and a 0 is a row: the falsy reading would delete it",
+        );
+        assert.equal(marks.get(bySlug.get("oral").id).value, 8.5);
+        assert.equal(
+          marks.get(bySlug.get("oral").id).scaleLevelId,
+          mb.id,
+          "the level is kept for display; the number is what aggregates (F38)",
+        );
+
+        // A level from another scale is not a level of this activity's scale.
+        await assert.rejects(
+          () =>
+            saveResults(
+              db,
+              home.homeId,
+              [
+                {
+                  studentId: ids.student,
+                  activityId: bySlug.get("oral").id,
+                  clear: false,
+                  scaleLevelId: "00000000-0000-4000-8000-000000000000",
+                  feedback: null,
+                },
+              ],
+              ids.teacher,
+            ),
+          /no es de la escala/,
+        );
+
+        // Moving what a level is worth moves the marks given on it. Without this
+        // the display changes and the mark does not, because a result stores the
+        // number and not the level.
+        await writeSetup(db, home.homeId, {
+          groups: [],
+          terms: [],
+          scales: [
+            {
+              id: scale.id,
+              name: scale.name,
+              levels: scale.levels.map((l) =>
+                l.id === mb.id ? { ...l, value: 9.5 } : l,
+              ),
+            },
+          ],
+        });
+        const moved = (
+          await gradebook(db, home.homeId, ids.current)
+        ).results.find((r) => r.activityId === bySlug.get("oral").id);
+        assert.equal(moved.value, 9.5);
+        assert.equal(moved.scaleLevelId, mb.id, "still the same level");
+      },
+    );
+
+    await t.test("a class sees its marks only once published", async () => {
+      const { home, setup } = await setupNow();
+      const grid = await gradebook(db, home.homeId, ids.current);
+      const tp = grid.activities.find((a) => a.slug === "tp-sql");
+
+      assert.deepEqual(
+        await myResults(db, home.homeId, ids.student),
+        [],
+        "the statement is out and the marks are not (F24)",
+      );
+
+      const publish = (resultsPublishedAt) =>
+        useArticle(db, home.homeId, ids.subject, tp.articleId, {
+          programUnitId: null,
+          position: 0,
+          publishedAt: PUBLISHED,
+          restricted: false,
+          ...NOT_GRADED,
+          offeringGroupId: setup.groups[0].id,
+          offeringTermId: setup.terms[0].id,
+          valueType: "numeric",
+          dueAt: PUBLISHED,
+          resultsPublishedAt,
+        });
+
+      await publish(new Date(Date.now() + 86_400_000));
+      assert.deepEqual(
+        await myResults(db, home.homeId, ids.student),
+        [],
+        "a date that has not arrived has not arrived",
+      );
+
+      await publish(PUBLISHED);
+      const mine = await myResults(db, home.homeId, ids.student);
+      const tpMine = mine.find((r) => r.slug === "tp-sql");
+      assert.equal(tpMine.value, 9);
+      assert.equal(tpMine.feedback, "muy bien");
+      assert.equal(tpMine.scaleLevel, null, "a numeric mark names no level");
+      assert.deepEqual(
+        await myResults(db, home.homeId, ids.orphanStudent),
+        [],
+        "these are one student's own marks and nobody else's",
+      );
+
+      // Hiding the statement again does not take back the marks (F24). A
+      // student watching them vanish could not tell that from a mistake.
+      await useArticle(db, home.homeId, ids.subject, tp.articleId, {
+        programUnitId: null,
+        position: 0,
+        publishedAt: null,
+        restricted: false,
+        ...NOT_GRADED,
+        offeringGroupId: setup.groups[0].id,
+        offeringTermId: setup.terms[0].id,
+        valueType: "numeric",
+        dueAt: PUBLISHED,
+        resultsPublishedAt: PUBLISHED,
+      });
+      assert.equal(
+        (await myResults(db, home.homeId, ids.student)).length,
+        mine.length,
+      );
+      assert.equal(
+        await readableArticle(db, ids.current, "tp-sql", NONE),
+        null,
+        "and the statement really is hidden",
+      );
+    });
+
+    await t.test("an activity with marks cannot be un-graded", async () => {
+      const { home, setup } = await setupNow();
+      const tp = (
+        await gradebook(db, home.homeId, ids.current)
+      ).activities.find((a) => a.slug === "tp-sql");
+      const theoryNote = {
+        programUnitId: null,
+        position: 0,
+        publishedAt: PUBLISHED,
+        restricted: false,
+        ...NOT_GRADED,
+      };
+
+      // The article editor saves the panel it knows about and leaves the
+      // grading half off. The row is written whole, so this would strand the
+      // marks on something that is no longer an activity — and unlike an
+      // article (F11) there is no version history to bring them back.
+      await assert.rejects(
+        () =>
+          useArticle(db, home.homeId, ids.subject, tp.articleId, theoryNote),
+        /ya tiene notas/,
+      );
+      await assert.rejects(
+        () =>
+          useArticle(db, home.homeId, ids.subject, tp.articleId, {
+            ...theoryNote,
+            offeringTermId: setup.terms[0].id,
+            valueType: "done",
+          }),
+        /ya tiene notas/,
+        "changing the type is the same problem",
+      );
+
+      // Nor can it be removed from the offering: that is a real DELETE, and the
+      // foreign key would surface as a 500 about nothing the teacher did.
+      await assert.rejects(
+        () => removeUse(db, home.homeId, tp.articleId),
+        /tiene notas/,
+      );
+
+      // An activity nobody has marked is still a teacher's to change.
+      const oral = (
+        await gradebook(db, home.homeId, ids.current)
+      ).activities.find((a) => a.slug === "oral");
+      await saveResults(
+        db,
+        home.homeId,
+        [
+          {
+            studentId: ids.student,
+            activityId: oral.id,
+            clear: true,
+            feedback: null,
+          },
+        ],
+        ids.teacher,
+      );
+      await useArticle(db, home.homeId, ids.subject, oral.articleId, {
+        ...theoryNote,
+        position: 1,
+      });
+      assert.equal(
+        (await gradebook(db, home.homeId, ids.current)).activities.some(
+          (a) => a.slug === "oral",
+        ),
+        false,
+        "no value type, no activity (F18)",
+      );
+    });
+
+    await t.test("a student who left still has their marks", async () => {
+      // F38 says a result carries no course and a later unenrolment leaves it
+      // standing. The grid has to keep showing them, or the teacher cannot see
+      // — let alone fix — the mark of somebody who transferred out in April.
+      // Last of this block: it changes the roster for everything after it.
+      const { home } = await setupNow();
+      const tp = (
+        await gradebook(db, home.homeId, ids.current)
+      ).activities.find((a) => a.slug === "tp-sql");
+      await saveResults(
+        db,
+        home.homeId,
+        [
+          {
+            studentId: ids.teacher,
+            activityId: tp.id,
+            clear: false,
+            value: 7,
+            feedback: null,
+          },
+        ],
+        ids.admin,
+      );
+
+      await root.query(
+        `delete from student_course where student_id = $1 and course_id = $2`,
+        [ids.teacher, ids.nr5a],
+      );
+
+      const grid = await gradebook(db, home.homeId, ids.current);
+      assert.deepEqual(
+        grid.students.map((s) => [s.surname, s.enrolled]),
+        [
+          ["Alumne", true],
+          ["Docente", false],
+        ],
+        "flagged, not hidden",
+      );
+      assert.equal(
+        grid.results.filter((r) => r.studentId === ids.teacher).length,
+        1,
+      );
+
+      // And the mark is still writable, which is the half a plain enrolment
+      // gate would have refused.
+      await saveResults(
+        db,
+        home.homeId,
+        [
+          {
+            studentId: ids.teacher,
+            activityId: tp.id,
+            clear: false,
+            value: 8,
+            feedback: null,
+          },
+        ],
+        ids.admin,
+      );
+      assert.equal(
+        (await gradebook(db, home.homeId, ids.current)).results.find(
+          (r) => r.studentId === ids.teacher,
+        ).value,
+        8,
+      );
     });
 
     await t.test(
@@ -708,6 +1383,7 @@ async function seed(root) {
   return {
     subject: subject.id,
     proyecto: proyecto.id,
+    nr5a,
     current,
     optional,
     pastYear,

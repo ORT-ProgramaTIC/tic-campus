@@ -9,8 +9,10 @@
 // finds here, `schemaFilter` notwithstanding, so listing them would put
 // `public."user"` in a campus migration.
 export * from "./article.js";
+export * from "./gradebook.js";
 export * from "./offering-article.js";
 export * from "./offering-home.js";
 export * from "./program-unit.js";
+export * from "./result.js";
 export * from "./session.js";
 export * from "./upload.js";

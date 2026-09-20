@@ -1,12 +1,13 @@
-import { Router, type Request, type RequestHandler } from "express";
+import { Router, type Request } from "express";
 import type { Db } from "../db/client.js";
 import { isUuid } from "../library/program.js";
 import { ApiError } from "../middleware/errors.js";
-import { actorFrom, capabilitiesFor } from "../offerings/access.js";
-import { activeHome, removeUse, useArticle } from "../offerings/content.js";
+import { actorFrom } from "../offerings/access.js";
+import { manageableHome, removeUse, useArticle } from "../offerings/content.js";
+import { isValueType, type ValueType } from "../offerings/results.js";
 
 /**
- * What an offering shows, and how (F4, F8, F13).
+ * What an offering shows, and how (F4, F8, F13, F18).
  *
  * **Its own prefix, and not `/api/offerings/:offeringId/…`.** That router owns
  * `GET /:year/:subject/:offering`, and Express matches in mount order: the
@@ -15,6 +16,11 @@ import { activeHome, removeUse, useArticle } from "../offerings/content.js";
  * today only because these two routes are a PUT and a DELETE, which is a
  * coincidence and not a design. So: **`/api/offerings` segments are a public
  * URL, `/api/homes` segments are ids.**
+ *
+ * **The session guard is on the mount, not in here** (`index.ts`), because
+ * `gradebook.ts` hangs off the same prefix: a guard per router would read and
+ * renew the session once per router a request walks past, which is twice for
+ * everything the other one serves.
  *
  * The gate is `manageOffering` (F5) — teaching *this* offering, not the
  * subject. Writing the article itself is the library's, and a teacher of
@@ -33,49 +39,32 @@ function uuidFrom(raw: string): string {
   return raw;
 }
 
-export function createHomeContentRoutes(db: Db, guard: RequestHandler): Router {
+export function createHomeContentRoutes(db: Db): Router {
   const router = Router();
-  router.use(guard);
 
-  /**
-   * One query does three jobs: 404s an offering campus has not activated or has
-   * archived (F34 — no presence at all, not an empty home), hands back the
-   * `homeId` the writes need, and hands back the `subjectId` `capabilitiesFor`
-   * takes. Checking existence before mutating is also what keeps a foreign-key
-   * violation from surfacing as a 500.
-   */
-  async function mustManage(
-    req: Request,
-  ): Promise<{ homeId: string; subjectId: number }> {
-    const offeringId = offeringIdFrom(String(req.params.offeringId));
-    const home = await activeHome(db, offeringId);
-    if (!home) {
-      throw new ApiError(404, "not_found", "Esa materia no está activada.");
-    }
+  function mustManage(req: Request) {
     const { record } = req.session!;
-    const can = await capabilitiesFor(
+    return manageableHome(
       db,
+      offeringIdFrom(String(req.params.offeringId)),
       actorFrom(record.userId, record.claims),
-      offeringId,
-      home.subjectId,
     );
-    if (!can.manageOffering) {
-      throw new ApiError(
-        403,
-        "forbidden",
-        "Esto lo hace quien da esta materia.",
-      );
-    }
-    return home;
   }
 
   /**
-   * The offering uses a library article, or changes how it does (F8).
+   * The offering uses a library article, or changes how it does (F8) — and
+   * since slice 7, whether it is an activity and how it is marked (F18).
    *
    * Idempotent on `(home, article)` like activation, so a teacher who saves the
    * same panel twice has not made a mistake. `publishedAt` null keeps it
    * staff-only, which is how an article written a week early stays unseen;
-   * `restricted` is F4's "enrolled students and staff only".
+   * `restricted` is F4's "enrolled students and staff only"; and
+   * `resultsPublishedAt` is F24's separate answer for the marks.
+   *
+   * **A whole row goes in.** Everything absent takes its default, which for
+   * the grading fields is "this is not an activity" — so the panel that saves
+   * an activity sends the grading fields back with it. `useArticle` refuses the
+   * one case that cannot be undone by saving again.
    */
   router.put("/:offeringId/articles/:articleId", (req, res, next) => {
     void (async () => {
@@ -90,8 +79,17 @@ export function createHomeContentRoutes(db: Db, guard: RequestHandler): Router {
           {
             programUnitId: unitIdFrom(body.programUnitId),
             position: positionFrom(body.position),
-            publishedAt: publishedAtFrom(body.publishedAt),
+            publishedAt: dateFrom(body.publishedAt, "publishedAt"),
             restricted: body.restricted === true,
+            offeringGroupId: idFrom(body.offeringGroupId, "offeringGroupId"),
+            offeringTermId: idFrom(body.offeringTermId, "offeringTermId"),
+            valueType: valueTypeFrom(body.valueType),
+            offeringScaleId: idFrom(body.offeringScaleId, "offeringScaleId"),
+            dueAt: dateFrom(body.dueAt, "dueAt"),
+            resultsPublishedAt: dateFrom(
+              body.resultsPublishedAt,
+              "resultsPublishedAt",
+            ),
           },
         );
         res.status(200).json({ used: true });
@@ -128,6 +126,28 @@ function unitIdFrom(raw: unknown): string | null {
   return raw;
 }
 
+function idFrom(raw: unknown, field: string): string | null {
+  if (raw === undefined || raw === null) return null;
+  if (!isUuid(raw)) {
+    throw new ApiError(400, "invalid_body", `\`${field}\` no es válido.`);
+  }
+  return raw;
+}
+
+/** F19's three, checked here rather than by a constraint — see the note on
+ *  `offering_article.valueType`. Null is "not an activity". */
+function valueTypeFrom(raw: unknown): ValueType | null {
+  if (raw === undefined || raw === null) return null;
+  if (!isValueType(raw)) {
+    throw new ApiError(
+      400,
+      "invalid_body",
+      "`valueType` es `numeric`, `done` o `scale`.",
+    );
+  }
+  return raw;
+}
+
 function positionFrom(raw: unknown): number {
   if (raw === undefined) return 0;
   if (
@@ -146,14 +166,14 @@ function positionFrom(raw: unknown): number {
 }
 
 /** An ISO date, or null for "not yet". A bad one is the teacher's to fix. */
-function publishedAtFrom(raw: unknown): Date | null {
+function dateFrom(raw: unknown, field: string): Date | null {
   if (raw === undefined || raw === null) return null;
   if (typeof raw !== "string") {
-    throw new ApiError(400, "invalid_body", "`publishedAt` es una fecha ISO.");
+    throw new ApiError(400, "invalid_body", `\`${field}\` es una fecha ISO.`);
   }
   const when = new Date(raw);
   if (Number.isNaN(when.getTime())) {
-    throw new ApiError(400, "invalid_body", "`publishedAt` no es una fecha.");
+    throw new ApiError(400, "invalid_body", `\`${field}\` no es una fecha.`);
   }
   return when;
 }
