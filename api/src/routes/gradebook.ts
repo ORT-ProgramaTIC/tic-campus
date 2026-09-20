@@ -20,6 +20,12 @@ import {
   myResults,
   saveResults,
 } from "../offerings/results.js";
+import {
+  checkGrades,
+  myOfficialGrades,
+  readOfficialGrades,
+  saveOfficialGrades,
+} from "../offerings/official-grades.js";
 import { MAX_FORMULA, checkFormula } from "../offerings/formula.js";
 import {
   computeBothViews,
@@ -28,7 +34,7 @@ import {
 } from "../offerings/marks.js";
 
 /**
- * The gradebook (F18, F19, F24, F26, F38, F39).
+ * The gradebook (F18, F19, F22, F24, F26, F38, F39).
  *
  * **Same prefix as `home-content.ts`, and the guard is on the mount.** Two
  * routers under `/api/homes` is one prefix doing one job — ids, not public URL
@@ -44,7 +50,10 @@ import {
  *
  * `/results/mine` is the exception and is not staff at all: it is the enrolled
  * student's own marks, gated on `seeOwnMarks` and F24's publish date, and it is
- * the only thing in this slice a student can reach.
+ * the only thing here a student can reach. It carries their official grades too
+ * (F22), which have no publish date of their own — a third key on that payload
+ * rather than a fourth route, because the boletín reads both numbers or
+ * neither.
  */
 
 function offeringIdFrom(raw: string): number {
@@ -90,14 +99,19 @@ export function createGradebookRoutes(db: Db): Router {
       try {
         const { homeId } = await mustManage(req);
         const offeringId = offeringIdFrom(String(req.params.offeringId));
-        const [setup, grid] = await Promise.all([
+        const [setup, grid, officialGrades] = await Promise.all([
           readSetup(db, homeId),
           gradebook(db, homeId, offeringId),
+          readOfficialGrades(db, homeId),
         ]);
         res.status(200).json({
           ...setup,
           scalePresets: SCALE_PRESETS,
           ...grid,
+          // The *other* number (F22): typed, not computed, and it rides in this
+          // payload for the reason everything else here does — the boletín
+          // draws both on one row and cannot do it in two round trips.
+          officialGrades,
           // Computed here and not stored anywhere (F20, F40), from rows the
           // read above already has — no query, and nothing to invalidate when a
           // result, a formula or a publish changes.
@@ -194,6 +208,35 @@ export function createGradebookRoutes(db: Db): Router {
   });
 
   /**
+   * The boletín's other column (F22): the grade a teacher types per student per
+   * term, with its observation and suggestion.
+   *
+   * **Touched entries, like `PUT …/results`** and unlike the whole-list saves
+   * next to it — this is a cell, not a panel. `value: null` empties one, and it
+   * takes the two texts with it.
+   *
+   * There is no publish date and no `POST …/official-grades/publish`: a grade
+   * here is visible the moment it exists. See the note on the table.
+   */
+  router.put("/:offeringId/official-grades", (req, res, next) => {
+    void (async () => {
+      try {
+        const { homeId } = await mustManage(req);
+        const { record } = req.session!;
+        await saveOfficialGrades(
+          db,
+          homeId,
+          checkGrades(req.body),
+          record.userId,
+        );
+        res.status(200).json({ saved: true });
+      } catch (cause) {
+        next(cause);
+      }
+    })();
+  });
+
+  /**
    * A student's own marks, published only (F24).
    *
    * **Ahead of nothing and under `/results`**, which is safe because the other
@@ -234,10 +277,13 @@ export function createGradebookRoutes(db: Db): Router {
         // it — and the list is filtered to what this student may see, or an
         // unpublished activity would drag their own mark down and tell them it
         // is there.
-        const [results, setup, activities] = await Promise.all([
+        const [results, setup, activities, official] = await Promise.all([
           myResults(db, home.homeId, record.userId),
           readSetup(db, home.homeId),
           listActivities(db, home.homeId),
+          // A third key here and not a fourth route (F22): the boletín is one
+          // screen, and the two numbers are read together or not at all.
+          myOfficialGrades(db, home.homeId, record.userId),
         ]);
         const computed = computeMarks(
           setup,
@@ -252,7 +298,7 @@ export function createGradebookRoutes(db: Db): Router {
         );
         res
           .status(200)
-          .json({ results, computed: computed.get(record.userId)! });
+          .json({ results, computed: computed.get(record.userId)!, official });
       } catch (cause) {
         next(cause);
       }

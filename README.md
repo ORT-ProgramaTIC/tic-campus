@@ -401,7 +401,8 @@ DELETE /api/homes/:oferta/gradebook/terms/:id           staff     idem
 DELETE /api/homes/:oferta/gradebook/scales/:id          staff     idem; se lleva sus niveles
 POST   /api/homes/:oferta/gradebook/preview             staff     una fórmula en borrador, sobre los estudiantes de verdad (F20)
 PUT    /api/homes/:oferta/results                       staff     guardar cada celda tocada, en una llamada (F38)
-GET    /api/homes/:oferta/results/mine                  sesión    mis notas publicadas y mi nota calculada (F24)
+PUT    /api/homes/:oferta/official-grades               staff     la nota del boletín que se escribe a mano (F22)
+GET    /api/homes/:oferta/results/mine                  sesión    mis notas publicadas, mi nota calculada y mi nota del boletín (F24, F22)
 ```
 
 **La fórmula.** `PUT …/gradebook` carries each term's `formula` and the offering's
@@ -476,6 +477,21 @@ is _enrolled now, plus whoever already carries a mark_, and the grid lists someb
 left flagged rather than hiding them — hiding them would hide the mark that still needs
 fixing. It reads `id`, `name` and `surname` and deliberately not `dni`; F27's import is
 where matching on a DNI belongs.
+
+**La otra nota del boletín** (F22). `official_grade` is the number a teacher **types**,
+per student per term, with its `observación` and its `sugerencia` — the `Notas Fijas` sheet
+and the `Nota - Observación - Sugerencia` string it was parsed out of. It rides in
+`GET …/gradebook` beside the computed one and in `GET …/results/mine` as `official`, because
+a boletín draws both numbers on one row and cannot do it in two round trips.
+
+**Se ve apenas existe**, and there is no third publish date. F24's `results_published_at`
+belongs to an `offering_article` and has nothing to say about a term, and the honest reading
+of the alternative is that a teacher types the boletín grade _when the boletín is due_ — a
+draft state here would be a flag nobody flips, standing between a student and a grade that
+is already decided. `resultsVisible` stays the rule for **results** and does not grow a
+third meaning. The save is `PUT …/results`'s shape and not `PUT …/gradebook`'s: touched
+entries, `value: null` to clear, and clearing takes the two texts with it — an observation
+has no home without its grade.
 
 **One read, and one write, whatever the size.** `GET …/gradebook` answers with the setup,
 the presets, the activities, the roster and the marks together, because the grid cannot

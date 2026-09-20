@@ -2,9 +2,10 @@ import { and, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { article } from "../db/schema/article.js";
 import { directoryEnrollment, directoryUser } from "../db/schema/directory.js";
-import { offeringScaleLevel } from "../db/schema/gradebook.js";
+import { offeringScaleLevel, offeringTerm } from "../db/schema/gradebook.js";
 import { offeringArticle } from "../db/schema/offering-article.js";
 import { offeringHome } from "../db/schema/offering-home.js";
+import { officialGrade } from "../db/schema/official-grade.js";
 import { result } from "../db/schema/result.js";
 import { isUuid } from "../library/program.js";
 import { ApiError } from "../middleware/errors.js";
@@ -123,7 +124,7 @@ export async function gradebook(
   const activities = await listActivities(db, homeId);
   const ids = activities.map((activity) => activity.id);
   const [students, results] = await Promise.all([
-    roster(db, offeringId, ids),
+    roster(db, offeringId, homeId),
     readMarks(db, ids),
   ]);
   return { activities, students, results };
@@ -170,12 +171,17 @@ export async function listActivities(
 
 /**
  * Everyone the grid has a column for: the enrolled, **plus whoever already
- * carries a mark** on one of these activities (F38's "a student no longer in
- * the offering rather than hiding it").
+ * carries a mark or an official grade** here (F38's "a student no longer in
+ * the offering rather than hiding it", and F22's same question).
  *
  * Two queries and a merge rather than a SQL `UNION` with a flag — the flag is
  * what the merge computes, and the second query returns nothing at all until
  * somebody actually leaves.
+ *
+ * **It takes the home and not a list of activity ids**, so this and
+ * `writableStudents` cannot answer differently: a student the teacher may write
+ * for is a student the grid has a row for, and the alternative is a departed
+ * student whose official grade nobody can reach to fix.
  *
  * **`id`, `name`, `surname` — not `dni`.** `directory.user` publishes it and
  * campus is a full reader of that view, but nothing on this screen needs it, so
@@ -185,38 +191,51 @@ export async function listActivities(
 export async function roster(
   db: Db,
   offeringId: number,
-  activityIds: string[],
+  homeId: string,
 ): Promise<Student[]> {
-  const enrolled = await db
-    .select({
-      id: directoryUser.id,
-      name: directoryUser.name,
-      surname: directoryUser.surname,
-    })
-    .from(directoryEnrollment)
-    .innerJoin(
-      directoryUser,
-      eq(directoryUser.id, directoryEnrollment.studentId),
-    )
-    .where(eq(directoryEnrollment.offeringId, offeringId));
+  const NAMES = {
+    id: directoryUser.id,
+    name: directoryUser.name,
+    surname: directoryUser.surname,
+  };
+  const [enrolled, marked, graded] = await Promise.all([
+    db
+      .select(NAMES)
+      .from(directoryEnrollment)
+      .innerJoin(
+        directoryUser,
+        eq(directoryUser.id, directoryEnrollment.studentId),
+      )
+      .where(eq(directoryEnrollment.offeringId, offeringId)),
+    db
+      .selectDistinct(NAMES)
+      .from(result)
+      .innerJoin(
+        offeringArticle,
+        and(
+          eq(offeringArticle.id, result.offeringArticleId),
+          eq(offeringArticle.offeringHomeId, homeId),
+        ),
+      )
+      .innerJoin(directoryUser, eq(directoryUser.id, result.studentId)),
+    db
+      .selectDistinct(NAMES)
+      .from(officialGrade)
+      .innerJoin(
+        offeringTerm,
+        and(
+          eq(offeringTerm.id, officialGrade.offeringTermId),
+          eq(offeringTerm.offeringHomeId, homeId),
+        ),
+      )
+      .innerJoin(directoryUser, eq(directoryUser.id, officialGrade.studentId)),
+  ]);
 
   const byId = new Map<number, Student>(
     enrolled.map((row) => [row.id, { ...row, enrolled: true }]),
   );
-
-  if (activityIds.length > 0) {
-    const marked = await db
-      .selectDistinct({
-        id: directoryUser.id,
-        name: directoryUser.name,
-        surname: directoryUser.surname,
-      })
-      .from(result)
-      .innerJoin(directoryUser, eq(directoryUser.id, result.studentId))
-      .where(inArray(result.offeringArticleId, activityIds));
-    for (const row of marked) {
-      if (!byId.has(row.id)) byId.set(row.id, { ...row, enrolled: false });
-    }
+  for (const row of [...marked, ...graded]) {
+    if (!byId.has(row.id)) byId.set(row.id, { ...row, enrolled: false });
   }
 
   return [...byId.values()].sort(
@@ -371,7 +390,7 @@ export async function saveResults(
   }
 
   const levels = await levelsFor(db, [...activities.values()]);
-  const writable = await writableStudents(db, homeId, [...activities.keys()]);
+  const writable = await writableStudents(db, homeId);
 
   const rows = [];
   const clears = [];
@@ -489,14 +508,22 @@ async function levelsFor(
   return new Map(rows.map(({ id, ...rest }) => [id, rest]));
 }
 
-/** Enrolled now, or already marked here — F38's create-only enrolment rule,
- *  read as a set rather than as a gate. */
-async function writableStudents(
+/**
+ * Enrolled now, or already carrying something here — F38's create-only
+ * enrolment rule, read as a set rather than as a gate.
+ *
+ * **Exported, and it takes the home alone.** F22's official grades ask the same
+ * question about the same people, and a departed student who carries one has to
+ * stay writable for exactly the reason a departed student with a mark does. So
+ * the "already carries" half is both tables, joined to the home rather than
+ * handed a list of ids by the caller — one rule, and neither writer can drift
+ * from the other by passing a different list.
+ */
+export async function writableStudents(
   db: Db,
   homeId: string,
-  activityIds: string[],
 ): Promise<Set<number>> {
-  const [enrolled, marked] = await Promise.all([
+  const [enrolled, marked, graded] = await Promise.all([
     db
       .select({ id: directoryEnrollment.studentId })
       .from(directoryEnrollment)
@@ -507,14 +534,28 @@ async function writableStudents(
           eq(offeringHome.id, homeId),
         ),
       ),
-    activityIds.length === 0
-      ? []
-      : db
-          .selectDistinct({ id: result.studentId })
-          .from(result)
-          .where(inArray(result.offeringArticleId, activityIds)),
+    db
+      .selectDistinct({ id: result.studentId })
+      .from(result)
+      .innerJoin(
+        offeringArticle,
+        and(
+          eq(offeringArticle.id, result.offeringArticleId),
+          eq(offeringArticle.offeringHomeId, homeId),
+        ),
+      ),
+    db
+      .selectDistinct({ id: officialGrade.studentId })
+      .from(officialGrade)
+      .innerJoin(
+        offeringTerm,
+        and(
+          eq(offeringTerm.id, officialGrade.offeringTermId),
+          eq(offeringTerm.offeringHomeId, homeId),
+        ),
+      ),
   ]);
-  return new Set([...enrolled, ...marked].map((row) => row.id));
+  return new Set([...enrolled, ...marked, ...graded].map((row) => row.id));
 }
 
 /* ── What is accepted ────────────────────────────────────────────────────── */

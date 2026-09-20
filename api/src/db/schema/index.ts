@@ -12,6 +12,7 @@ export * from "./article.js";
 export * from "./gradebook.js";
 export * from "./offering-article.js";
 export * from "./offering-home.js";
+export * from "./official-grade.js";
 export * from "./program-unit.js";
 export * from "./result.js";
 export * from "./session.js";

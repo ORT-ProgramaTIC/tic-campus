@@ -50,6 +50,11 @@ import {
   publishedOnly,
 } from "../dist/offerings/marks.js";
 import {
+  myOfficialGrades,
+  readOfficialGrades,
+  saveOfficialGrades,
+} from "../dist/offerings/official-grades.js";
+import {
   listUploads,
   pathFor,
   readUpload,
@@ -1482,6 +1487,120 @@ test(
         undefined,
       );
     });
+
+    // --- slice 9: the other number on the boletín (F22) ---------------------
+    //
+    // Still ordered before the deactivation below. `ids.teacher` is the
+    // departed student by now, carrying a result and no enrolment.
+
+    await t.test(
+      "an official grade is typed, changed and cleared",
+      async () => {
+        // **Insert, update and delete as `campus_svc`** — a subtest that only
+        // read would prove nothing about the grant a new table needs, and the
+        // symptom of a missing one is `permission denied` here and a green
+        // typecheck everywhere else.
+        const { home, setup } = await setupNow();
+        const term = setup.terms[0].id;
+        const grade = (value, extra = {}) => ({
+          studentId: ids.student,
+          termId: term,
+          clear: value === null,
+          ...(value === null ? {} : { value }),
+          observation: null,
+          suggestion: null,
+          ...extra,
+        });
+
+        await saveOfficialGrades(
+          db,
+          home.homeId,
+          [
+            grade(7, {
+              observation: "Mejoró mucho en el segundo tramo.",
+              suggestion: "Repasar consultas anidadas.",
+            }),
+          ],
+          ids.admin,
+        );
+        const [written] = await readOfficialGrades(db, home.homeId);
+        // `numeric` mode again: a string 7 would compare equal to nothing useful
+        // and would reach a boletín quoted.
+        assert.equal(typeof written.value, "number");
+        assert.equal(written.value, 7);
+        assert.equal(written.suggestion, "Repasar consultas anidadas.");
+        assert.equal(written.recordedBy, ids.admin);
+
+        // The student sees it at once, and that is the whole visibility rule
+        // (F22): there is no third publish date, and `resultsVisible` is not
+        // consulted here. The computed mark for the same term is 9.
+        const mine = await myOfficialGrades(db, home.homeId, ids.student);
+        assert.deepEqual(
+          mine.map((row) => [row.termId, row.value]),
+          [[term, 7]],
+        );
+
+        // Update: the upsert, not a second row.
+        await saveOfficialGrades(db, home.homeId, [grade(8.5)], ids.admin);
+        const after = await readOfficialGrades(db, home.homeId);
+        assert.equal(after.length, 1, "one row per student per term");
+        assert.equal(after[0].value, 8.5);
+        assert.equal(
+          after[0].suggestion,
+          null,
+          "the texts are the cell's, so a save without them clears them",
+        );
+
+        // A term of another offering — or of none — never reaches a row, the
+        // same hole `saveResults` closes for activity ids.
+        await assert.rejects(
+          () =>
+            saveOfficialGrades(
+              db,
+              home.homeId,
+              [{ ...grade(6), termId: "99999999-9999-4999-8999-999999999999" }],
+              ids.admin,
+            ),
+          /trimestre/,
+        );
+
+        // Somebody who does not cursa this materia, and never did: F38's writable
+        // set, shared with `saveResults` rather than restated.
+        await assert.rejects(
+          () =>
+            saveOfficialGrades(
+              db,
+              home.homeId,
+              [{ ...grade(6), studentId: ids.orphanStudent }],
+              ids.admin,
+            ),
+          /cursa/,
+        );
+
+        // The departed student is still writable, which is the half a plain
+        // enrolment gate would refuse — and the grid has a row for them.
+        await saveOfficialGrades(
+          db,
+          home.homeId,
+          [{ ...grade(6), studentId: ids.teacher }],
+          ids.admin,
+        );
+        assert.equal((await readOfficialGrades(db, home.homeId)).length, 2);
+
+        // Delete: `value: null`, and the row goes rather than turning blank.
+        await saveOfficialGrades(
+          db,
+          home.homeId,
+          [grade(null), { ...grade(null), studentId: ids.teacher }],
+          ids.admin,
+        );
+        assert.deepEqual(await readOfficialGrades(db, home.homeId), []);
+        assert.deepEqual(
+          await myOfficialGrades(db, home.homeId, ids.student),
+          [],
+        );
+      },
+    );
 
     await t.test(
       "the admin listing shows what is not activated yet",

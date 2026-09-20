@@ -589,10 +589,47 @@ directly. See F15 for why there is no per-offering copy of the units yet.
 
 ### F22 · Official term grade
 
-- [x] **Status:** decided
+- [x] **Status:** built (slice 9)
 - **Decision:** Alongside the computed mark, the teacher enters an **official grade** per
   term: a value, an observation and a suggestion. Students see both. This replaces the
   `Notas Fijas` sheet and its `Nota - Observación - Sugerencia` string parsing.
+
+  **Built 2026-09-20.** `campus.official_grade` is `(student, offering_term, value,
+observation, suggestion)` plus `recorded_by`/`recorded_at`, unique on the first two.
+  `PUT /api/homes/:oferta/official-grades` writes it; the grid reads it in
+  `GET …/gradebook` as `officialGrades` and the student reads their own in
+  `GET …/results/mine` as `official`. Four things settled by building it:
+
+  - **An official grade is visible the moment it exists**, and there is no third publish
+    date. F24's question asked again, and F24's answer does not fit: `resultsVisible` keys
+    off `offering_article.results_published_at`, which is _per activity_, and a term has no
+    such column. The alternatives were a publish date on the term or none, and none wins on
+    what actually happens: a teacher types the boletín grade **when the boletín is due**, so
+    a draft state would be a flag nobody flips, standing between a student and a grade that
+    is already decided. `resultsVisible` remains the rule for _results_ and deliberately
+    does not grow a third meaning — the two reads are now two rules because they answer two
+    questions, not because anybody forgot to unify them.
+    The day a teacher does want to hold one back, it is a nullable `published_at` on this
+    table and one clause in `myOfficialGrades`, and nothing else moves.
+  - **A third key on `/results/mine`, not a fourth route.** Slice 8 already made that
+    payload `{ results, computed }`; the boletín reads both numbers or neither, so a
+    separate `GET` would be a second round trip that can disagree with the first.
+  - **The save is `PUT …/results`'s shape and not `PUT …/gradebook`'s.** Groups, terms and
+    scales are whole lists that never delete (F15's rule) because a stale panel would
+    otherwise wipe a colleague's row. This is a _cell_: entries nobody sent are untouched
+    and `value: null` clears one, which also takes the observation and the suggestion with
+    it — `value` is `NOT NULL` and a blank is an absent row (F38), so an observation cannot
+    outlive its grade. An entry with no `value` at all is a `400` rather than a silent
+    no-op. `checkMark` is reused rather than restated, so the 1–10 with two decimals cannot
+    drift from the gradebook's.
+  - **`recorded_by`/`recorded_at` are copied from `result`, and this is not F41.** The
+    write is an upsert, so they answer _who holds this grade now_, not _who set it to 4_ —
+    the same gap F41 exists to close, now in two tables instead of one.
+
+  **Enrolment is F38's rule and is now shared rather than restated.** `writableStudents`
+  moved to taking the home alone and reads both `result` and `official_grade`: a departed
+  student who carries either stays writable and stays in the grid, flagged. `roster` reads
+  the same two, so what a teacher can write and what the grid shows them cannot disagree.
 
 ### F23 · Redos
 
@@ -629,6 +666,10 @@ directly. See F15 for why there is no per-offering copy of the units yet.
     visibility is **not** consulted: a teacher who unpublishes a statement in
     October has not asked to take back the marks they published in September,
     and a student watching them vanish could not tell that from a mistake.
+
+  **F22 asked this a third time and got a different answer (slice 9).** An official grade
+  is visible the moment it exists — a term carries no `results_published_at` and cannot,
+  and `resultsVisible` did not grow a third meaning. See F22.
 
   **The computed mark arrived 2026-09-20 (slice 8)**, and `resultsVisible` got its first
   caller — it had none until now, since `myResults` carried the same rule in its `where`.
@@ -997,6 +1038,11 @@ duplicate_name` telling the teacher to save it in two steps, rather than a
   tic-auth's own audit table is: `campus_svc` gets `SELECT, INSERT` and nothing else.
   Writing to tic-auth's `public.audit_event` is not an option — campus holds no privilege
   on it.
+
+  **Slice 9 widened it and still did not build it.** `official_grade` carries the same
+  inline `recorded_by`/`recorded_at` as `result`, for the same consistency and with the
+  same hole: an upsert overwrites the marker along with the grade. Two tables now need this
+  item rather than one.
 
   **Slice 7 made this concrete and did not build it.** A result is written by an
   upsert, so `recorded_by` and `recorded_at` answer _who holds this mark now_,
