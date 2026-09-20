@@ -1,4 +1,5 @@
 import { Router, type RequestHandler, type Request } from "express";
+import multer from "multer";
 import type { Db } from "../db/client.js";
 import {
   archiveArticle,
@@ -17,8 +18,28 @@ import {
   readProgram,
   writeProgram,
 } from "../library/program.js";
+import {
+  checkFilename,
+  checkMediaType,
+  listUploads,
+  saveUpload,
+} from "../library/uploads.js";
 import { ApiError } from "../middleware/errors.js";
 import { actorFrom, teachesSubject } from "../offerings/access.js";
+
+/**
+ * F9's 20 MB, on its own parser. `index.ts` keeps JSON at 1 MB.
+ *
+ * **`defParamCharset` is not optional here.** busboy's default is `latin1`, and
+ * these are Spanish filenames: `Guía de TPs.pdf` arrives as `GuÃ­a de TPs.pdf`,
+ * is stored that way, and comes back out of the database mojibaked forever.
+ * Measured against multer 2.4.0 before it was set.
+ */
+const multipart = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024, files: 1 },
+  defParamCharset: "utf8",
+});
 
 /**
  * A subject's library: its articles and its program (F7, F8, F11, F15).
@@ -63,7 +84,11 @@ function bodyText(raw: unknown, what: string): string {
   return raw;
 }
 
-export function createLibraryRoutes(db: Db, guard: RequestHandler): Router {
+export function createLibraryRoutes(
+  db: Db,
+  guard: RequestHandler,
+  uploadsDir: string,
+): Router {
   const router = Router();
   router.use(guard);
 
@@ -285,6 +310,70 @@ export function createLibraryRoutes(db: Db, guard: RequestHandler): Router {
       }
     })();
   });
+
+  /**
+   * The subject's files (F9). Here rather than in a router of their own
+   * because an upload is library — the same subject, the same `editLibrary`
+   * gate, the same `mustEdit`. Only *serving* them is elsewhere, and only
+   * because that read must not be behind `guard`.
+   *
+   * **There is no `DELETE`.** Nothing here knows which articles reference a
+   * file — the reference is Markdown, which the api does not parse (F7, F44) —
+   * so a delete would break articles silently and with nothing to restore
+   * from, unlike an article's own version history (F11). It waits for an
+   * editor that can show a teacher where a file is used.
+   */
+  router.get("/:subjectId/uploads", (req, res, next) => {
+    void (async () => {
+      try {
+        res.status(200).json(await listUploads(db, await mustEdit(req)));
+      } catch (cause) {
+        next(cause);
+      }
+    })();
+  });
+
+  /**
+   * `multipart/form-data`, field `file`, **20 MB** (F9) — a different parser
+   * and a different limit from the 1 MB `express.json()` in `index.ts`, and
+   * deliberately so: that cap is for an article's Markdown.
+   *
+   * The parser is mounted on this one route and never with `router.use`, so no
+   * other route in this file grows a multipart body.
+   *
+   * ponytail: `memoryStorage` buffers the whole 20 MB before it is written.
+   * One file at a time from a handful of teachers is nothing; move to
+   * `diskStorage` if that stops being true.
+   */
+  router.post(
+    "/:subjectId/uploads",
+    multipart.single("file"),
+    (req, res, next) => {
+      void (async () => {
+        try {
+          const subjectId = await mustEdit(req);
+          const file = req.file;
+          if (!file) {
+            throw new ApiError(
+              400,
+              "invalid_upload",
+              "Falta el archivo — mandalo en el campo «file».",
+            );
+          }
+          const { record } = req.session!;
+          res.status(201).json(
+            await saveUpload(db, uploadsDir, subjectId, record.userId, {
+              filename: checkFilename(file.originalname),
+              mediaType: checkMediaType(file.mimetype),
+              bytes: file.buffer,
+            }),
+          );
+        } catch (cause) {
+          next(cause);
+        }
+      })();
+    },
+  );
 
   return router;
 }

@@ -1,3 +1,4 @@
+import { mkdirSync } from "node:fs";
 import { count } from "drizzle-orm";
 import express, { type RequestHandler } from "express";
 import { createRemoteKeySource } from "./auth/jwks.js";
@@ -17,8 +18,16 @@ import { createAuthRoutes, createMeRoute } from "./routes/auth.js";
 import { createHomeContentRoutes } from "./routes/home-content.js";
 import { createLibraryRoutes } from "./routes/library.js";
 import { createOfferingRoutes } from "./routes/offerings.js";
+import { createUploadRoutes } from "./routes/uploads.js";
 
 const config = loadConfig();
+
+// The uploads volume (F9), made sure of at boot rather than on the first
+// upload: a container that cannot write it says so in its own log, instead of
+// in the browser of whichever teacher got there first. `recursive` so a fresh
+// volume, which is an empty directory, is enough.
+mkdirSync(config.uploadsDir, { recursive: true });
+
 const pool = createPool(config);
 const db = createDb(pool);
 
@@ -170,11 +179,14 @@ if (config.auth) {
  * liveness probe never walks it, and below `/api/auth/*`, whose routes have no
  * JSON body either.
  *
- * **1 MB, and deliberately not F9's 20 MB.** That cap is for uploaded files, on
- * a multipart route that does not exist yet and will bring its own limit. The
- * biggest body here is an article: kilobytes of Markdown. The only thing that
- * gets past Express's 100 kB default is a pasted base64 image, which is the
- * exact case F9 exists to take somewhere else.
+ * **1 MB, and deliberately not F9's 20 MB.** That cap belongs to uploaded
+ * files, and since slice 6 it exists — on multer, on the one route in
+ * `routes/library.ts` that takes a `multipart/form-data` body. The two numbers
+ * stay independent because they cap different things: the biggest body *here*
+ * is an article, kilobytes of Markdown, and the only thing that gets past
+ * Express's 100 kB default is a pasted base64 image, which is the exact case
+ * F9 takes somewhere else. Raising this one to fit a PDF would hand every JSON
+ * route a 20 MB buffer to be talked into allocating.
  */
 app.use(express.json({ limit: "1mb" }));
 
@@ -186,8 +198,11 @@ app.use("/api/offerings", createOfferingRoutes(db, { guard, maybeSession }));
 app.use("/api/admin/offerings", createAdminOfferingRoutes(db, guard));
 // The subject's library (F8), and what one offering does with it (F4, F8, F13).
 // `/api/homes` rather than `/api/offerings/:id/…`: see the note in its file.
-app.use("/api/subjects", createLibraryRoutes(db, guard));
+app.use("/api/subjects", createLibraryRoutes(db, guard, config.uploadsDir));
 app.use("/api/homes", createHomeContentRoutes(db, guard));
+// The bytes of an upload (F9). Public, and with no session middleware at all:
+// every image in every article comes through here.
+app.use("/api/uploads", createUploadRoutes(db, config.uploadsDir));
 
 // Last, and in this order: anything that reached here matched no route, and
 // anything thrown by one of them lands in the handler.

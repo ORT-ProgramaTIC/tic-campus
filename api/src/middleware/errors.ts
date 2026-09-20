@@ -8,9 +8,11 @@ import type { NextFunction, Request, Response } from "express";
  * ```
  *
  * Success responses carry the resource directly — there is no data envelope
- * (MEV's `api/src/middleware/errors.ts`, which this is a port of, minus its
- * streaming cases: campus streams nothing. Its body-parser cases came back
- * with slice 5, which is where campus started parsing bodies).
+ * (MEV's `api/src/middleware/errors.ts`, which this is a port of. Its
+ * body-parser cases came back with slice 5, where campus started parsing
+ * bodies, and its streaming case with slice 6: `GET /api/uploads/:id` hands a
+ * file to `res.sendFile`, so "campus streams nothing" stopped being true —
+ * which is why `headersSent` below is load-bearing now and not just careful.)
  *
  * **Slice 3 had no handler at all.** Its two routes wrote the envelope by hand
  * and a thrown error reached Express 5's default, which answers with an HTML
@@ -58,7 +60,7 @@ export function errorHandler(
     return;
   }
 
-  const fromBody = bodyParserError(err);
+  const fromBody = bodyParserError(err) ?? multerError(err);
   if (fromBody) {
     res.status(fromBody.status).json({
       error: { code: fromBody.code, message: fromBody.message },
@@ -115,4 +117,34 @@ function bodyParserError(
     };
   }
   return null;
+}
+
+/**
+ * multer's refusals (F9), which are neither `ApiError` nor body-parser's — so
+ * without this a 21 MB file is a 500 logged as something unexplained, and the
+ * teacher is told campus broke when campus worked exactly as designed.
+ *
+ * Matched on `name` rather than `instanceof MulterError`, so this file keeps
+ * importing nothing: it is the one place that answers for everybody, and it
+ * should not depend on whichever parser a route happens to use.
+ */
+function multerError(
+  err: unknown,
+): { status: number; code: string; message: string } | null {
+  if (typeof err !== "object" || err === null) return null;
+  const { name, code } = err as { name?: unknown; code?: unknown };
+  if (name !== "MulterError") return null;
+
+  if (code === "LIMIT_FILE_SIZE") {
+    return {
+      status: 413,
+      code: "file_too_large",
+      message: "El archivo pasa los 20 MB. Si es un video, va a YouTube.",
+    };
+  }
+  return {
+    status: 400,
+    code: "invalid_upload",
+    message: "No pudimos leer el archivo — mandá uno solo, en el campo «file».",
+  };
 }

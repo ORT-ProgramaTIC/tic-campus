@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { Pool } from "pg";
 import { createDb } from "../dist/db/client.js";
@@ -25,6 +29,12 @@ import {
   readProgram,
   writeProgram,
 } from "../dist/library/program.js";
+import {
+  listUploads,
+  pathFor,
+  readUpload,
+  saveUpload,
+} from "../dist/library/uploads.js";
 import {
   listActivated,
   listForAdmin,
@@ -497,6 +507,48 @@ test(
         );
       },
     );
+
+    // F9. The only place the new table's GRANT is exercised at all: every call
+    // below goes through `campus_svc`, and a table missing from the schema
+    // barrel fails here with `permission denied` rather than at typecheck.
+    await t.test("a file is written to the volume and indexed", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "campus-uploads-"));
+      t.after(() => rm(dir, { recursive: true, force: true }));
+      const bytes = Buffer.from("%PDF-1.4 no es un PDF, pero alcanza\n");
+
+      const saved = await saveUpload(db, dir, ids.subject, ids.teacher, {
+        filename: "Guía de TPs.pdf",
+        mediaType: "application/pdf",
+        bytes,
+      });
+      assert.equal(saved.size, bytes.byteLength);
+      assert.equal(
+        saved.sha256,
+        createHash("sha256").update(bytes).digest("hex"),
+      );
+      assert.deepEqual(await readFile(pathFor(dir, saved.id)), bytes);
+      assert.deepEqual(
+        await readdir(dir),
+        [saved.id],
+        "the staging file is renamed, not left beside it",
+      );
+
+      assert.deepEqual(await readUpload(db, saved.id), {
+        filename: "Guía de TPs.pdf",
+        mediaType: "application/pdf",
+      });
+      assert.equal(
+        await readUpload(db, "00000000-0000-4000-8000-000000000000"),
+        null,
+      );
+
+      // Subject-scoped (F9): another subject's library does not list it.
+      assert.deepEqual(
+        (await listUploads(db, ids.subject)).map((u) => u.id),
+        [saved.id],
+      );
+      assert.deepEqual(await listUploads(db, ids.proyecto), []);
+    });
 
     await t.test(
       "the admin listing shows what is not activated yet",

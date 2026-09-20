@@ -9,6 +9,11 @@ SERVICES ?= api web
 # `docker compose exec` cannot see it: it is reached by name.
 DB_CONTAINER ?= tic-db
 
+# The bytes of every upload (F9). Created by hand, once per box, and declared
+# `external` in compose for the same reason tic-platform declares tic-db-data
+# that way: this is the only copy outside the nightly backup.
+UPLOADS_VOLUME ?= tic-campus-uploads
+
 # The secret compose MOUNTS into tic-campus-api. Checked before the roll:
 # compose does check its `file:` sources, but only on `up` — by which point the
 # old container is gone and the message is about a path rather than about the
@@ -57,6 +62,14 @@ rollout:  ## the half of `deploy` after the pull — not called directly
 	  echo "FAIL: the $(DB_CONTAINER) network does not exist — run \`make -C /opt/tic-platform up\` first"; exit 1; }
 	@test "$$(docker inspect -f '{{.State.Health.Status}}' $(DB_CONTAINER) 2>/dev/null)" = healthy || { \
 	  echo "FAIL: $(DB_CONTAINER) is not healthy — run \`make -C /opt/tic-platform up\` first"; exit 1; }
+	@# The uploads volume (F9). `external: true`, so compose refuses to start
+	@# without it — but its message names a volume, not the install step that
+	@# was missed, and creating one by hand at that point is the difference
+	@# between an empty stack and a stack whose files are somewhere else.
+	@docker volume inspect $(UPLOADS_VOLUME) >/dev/null 2>&1 || { \
+	  echo "FAIL: the $(UPLOADS_VOLUME) volume does not exist — \`docker volume create $(UPLOADS_VOLUME)\`."; \
+	  echo "      It holds every file teachers upload (F9) and is deliberately NOT created by"; \
+	  echo "      compose, so that \`docker compose down -v\` cannot take them with it."; exit 1; }
 	@test -r .env || { \
 	  echo "FAIL: cannot read .env — compose reads it at parse time and every target needs it."; \
 	  echo "      Copy .env.example to .env (root:root 0600) and fill it in."; exit 1; }

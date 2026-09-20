@@ -13,3 +13,4 @@ export * from "./offering-article.js";
 export * from "./offering-home.js";
 export * from "./program-unit.js";
 export * from "./session.js";
+export * from "./upload.js";

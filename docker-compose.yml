@@ -28,6 +28,12 @@ services:
         target: /run/secrets/db_svc_password
       - source: tic_auth_client_secret
         target: /run/secrets/tic_auth_client_secret
+    # The bytes of every upload (F9). `web` does not get it: nginx proxies
+    # /api/ to the api, which is what serves them. `UPLOADS_DIR` in `.env` must
+    # name this exact target — rename one side only and the files are still on
+    # the volume, but every article that pointed at one is broken.
+    volumes:
+      - uploads:/var/lib/tic-campus/uploads
     # `tic-db` for the database; the edge network is how tic-proxy reaches the
     # stack. `web` stays off `tic-db`: nginx has no business there.
     networks: [tic-campus-edge, tic-db]
@@ -62,6 +68,20 @@ networks:
     external: true
   tic-db:
     external: true
+
+# `external: true`, hand-created, exactly like tic-platform's `tic-db-data`:
+# these are teachers' files and the only copy of them outside the nightly
+# backup, so `docker compose down -v` must not be able to take them. Compose
+# refuses to start without it, which is the loud failure a silently-created
+# empty anonymous volume would not be.
+#
+#   docker volume create tic-campus-uploads
+#
+# `make rollout` checks for it before building.
+volumes:
+  uploads:
+    external: true
+    name: tic-campus-uploads
 
 # `secrets/db_owner_password` is deliberately NOT here: migrations run on the
 # host as `campus_owner` and that file never enters a container, so mounting it

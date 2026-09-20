@@ -25,6 +25,19 @@ make deploy
 `tic-campus-web` (nginx) serves the frontend at `/` and proxies `/api/` to
 `tic-campus-api`. tic-proxy reaches it over `tic-campus-edge`.
 
+**Once per box, before the first deploy**, the volume that holds every uploaded file (F9):
+
+```sh
+docker volume create tic-campus-uploads
+```
+
+It is `external: true` in compose and created by hand for the same reason tic-platform's
+`tic-db-data` is: these are teachers' files, the only copy outside the nightly backup, and
+`docker compose down -v` must not be able to take them. `make deploy` refuses before
+building if it is missing, and tic-platform's `bin/backup.sh` archives it beside the
+database dump — a lost volume is not a lost cache, it is broken articles the database still
+points at.
+
 ### The database
 
 `tic-campus-api` is also on `tic-db`, tic-platform's shared Postgres, and `tic-campus-web`
@@ -137,6 +150,26 @@ It proves the round trip and **not** the refusals: it never reads `code_challeng
 token for an unknown `code`, and hardcodes `acr: "strong"`. Everything it cannot test —
 `acr=campus`, `alg: none`, HS256 confusion, a wrong audience, the `Host` header, the
 single-flight — is in `api/test/auth-*.test.mjs`, signed against a locally generated key.
+
+#### Los archivos, sin salir de la máquina
+
+The upload routes need a session but not tic-auth: the four-step login is unchanged, so a
+row inserted straight into `campus.session` — `id = sha256(cookie value)`, fresh
+`claims_at`, any `csrf` — drives them with two headers. Off production the cookie is
+`tic_campus_session_dev`, and `UPLOADS_DIR` can be any writable directory.
+
+```sh
+curl -s -H "Cookie: tic_campus_session_dev=$SECRET" -H "X-CSRF-Token: $CSRF" \
+  -F 'file=@Guía de TPs.pdf;type=application/pdf' \
+  http://127.0.0.1:3000/api/subjects/1/uploads            # 201 { id, sha256, … }
+curl -si http://127.0.0.1:3000/api/uploads/$ID | head -5  # 200, sin cookie ninguna
+```
+
+Worth checking by hand after any change here: a file over 20 MB is `413 file_too_large` in
+the envelope and not an HTML page; an `evil.html` comes back `application/octet-stream` +
+`attachment`; and an accented filename survives the round trip — busboy decodes multipart
+filenames as **latin1** unless told otherwise, which is why `defParamCharset: "utf8"` is set
+where multer is built.
 
 #### Una sesión de verdad, para probar las rutas a mano
 
@@ -268,6 +301,9 @@ DELETE /api/subjects/:id/articles/:slug                staff     archivar (F36)
 GET    /api/subjects/:id/program                       staff     las unidades (F15)
 PUT    /api/subjects/:id/program                       staff     crear/renombrar/reordenar (F15)
 DELETE /api/subjects/:id/program/:unitId               staff     borrar una unidad (409 si está en uso)
+POST   /api/subjects/:id/uploads                       staff     subir un archivo: multipart, campo «file» (F9)
+GET    /api/subjects/:id/uploads                       staff     los archivos de la materia, del último al primero
+GET    /api/uploads/:id                                público   los bytes (F9)
 PUT    /api/homes/:oferta/articles/:articleId          staff     usarlo: unidad, orden, fecha, visibilidad (F4, F8)
 DELETE /api/homes/:oferta/articles/:articleId          staff     dejar de usarlo
 GET    /api/offerings/:año/:materia/:oferta            público   ahora con programa y artículos (F13, F15)
@@ -321,6 +357,25 @@ deferring it makes propagation stronger rather than weaker. **`PUT …/program` 
 deletes**: a teacher saving a list they loaded before a colleague added a unit would
 otherwise wipe it, and by foreign key every article filed under it, with no version history
 to recover from.
+
+**Un archivo se sirve a quien tenga su id** (F9). `campus.upload` is the index and the
+bytes are on the `tic-campus-uploads` volume, at `<UPLOADS_DIR>/<id>`. There is deliberately
+no visibility check: the reference from an article to a file is `::download{file=<id>}`
+inside the Markdown, the api parses no Markdown, and the check would only have stopped
+somebody guessing a uuid — F9 and F37 carry that decision and its upgrade path. There is no
+`DELETE` either, for the same reason: nothing knows which articles a delete would break.
+
+**What campus serves is not what was uploaded.** `serveAs` allows PNG, JPEG, GIF, WebP,
+AVIF and PDF `inline` as themselves; **everything else, `image/svg+xml` included, is
+`application/octet-stream` + `attachment`**, always with `nosniff`. An SVG is a document
+that runs script, and these files come from the origin the app runs on. Nothing is refused
+at upload time — a starter zip is the point.
+
+**Three size limits, and only one of them is in the api's own code.** multer caps a file at
+20 MB and answers `413 file_too_large`; `express.json` stays at 1 MB, because raising it to
+fit a PDF would hand every JSON route a 20 MB buffer; and `client_max_body_size 20m` in
+`docker/web/nginx.conf` is the one that bites — without it nginx answers its own HTML 413 at
+**1 MB**, before the request reaches the api, and the client never sees the error envelope.
 
 **A slug is set once** (F32) and is rejected rather than repaired: `checkSlug` refuses
 anything `slugify` would change, and says what to type instead. Silently normalizing would

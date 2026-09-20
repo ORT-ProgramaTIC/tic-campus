@@ -266,7 +266,7 @@ strong` stays in `verify.ts`, so there is no second credential gate either.
 
 ### F9 · Uploads
 
-- [x] **Status:** decided
+- [x] **Status:** built (slice 6)
 - **Decision:** Images and files (PDFs, starter zips) are dragged into the editor. They are
   stored on a campus Docker volume and served by campus. This replaces assets hosted on
   Drive and GitHub.
@@ -276,11 +276,58 @@ strong` stays in `verify.ts`, so there is no second credential gate either.
   articles. That is a change to tic-platform's `bin/backup.sh`. Storing the files in
   Postgres was rejected because it bloats the shared database and every dump of it.
 
+  **Built 2026-09-20.** `campus.upload` is the index and the bytes are at
+  `<UPLOADS_DIR>/<id>` on `tic-campus-uploads`, an `external: true` volume created by hand,
+  like tic-platform's `tic-db-data` — `docker compose down -v` must not be able to take
+  teachers' files, and `make rollout` refuses to build without it. Four things settled:
+
+  - **An upload is served to anybody holding its uuid, and F37's sentence is reopened
+    here.** F37 said "serving a file checks the visibility of the articles that reference
+    it", and nothing in the api can answer that question: the reference is
+    `::download{file=<id>}` inside `article_version.body`, and the api parses no Markdown
+    (F7, F44). The two ways out were a parser — reversing slice 5's most deliberate decision
+    to make an upload route easier — or an `article_id` on the row, which records where a
+    file was _uploaded_ rather than where it is _referenced_ and is wrong the first time a
+    teacher copies a directive into a second article. Neither is worth it, because of what
+    the check actually buys: it stops somebody **guessing** a 122-bit id, and nothing else.
+    Anybody who may read a restricted article can forward the PDF itself. So an upload is
+    subject-scoped, exactly as this table row says, and the id is the capability.
+    **If an exam ever does leak this way**, the upgrade is `upload.article_id` plus `mayRead`
+    over that article's uses — a column and a join, not a rewrite.
+  - **What campus serves is never simply what was uploaded.** Files come back from the same
+    origin the app runs on, so serving one inline with the media type its uploader claimed is
+    stored XSS — an `.html`, or an `.svg`, which is a document that runs script, against a
+    logged-in teacher's session. `serveAs` holds a small allowlist of things browsers render
+    and cannot be scripted by (PNG, JPEG, GIF, WebP, AVIF, PDF): those are `inline` as
+    themselves, and **everything else is `application/octet-stream` + `attachment`**, with
+    `X-Content-Type-Options: nosniff` on both. Nothing is refused at upload time — F9 is for
+    starter zips — and `image/svg+xml` is absent from that list on purpose, which is why it
+    is an allowlist and not a denylist.
+  - **The 20 MB is multer's and the 1 MB is `express.json`'s**, and they stay independent.
+    Raising the JSON limit to fit a PDF would hand every JSON route a 20 MB buffer to be
+    talked into allocating. The proxy is a third limit and the easiest to forget:
+    `client_max_body_size 20m` in `docker/web/nginx.conf`, without which nginx answers its
+    own HTML 413 at **1 MB** and the client never sees the error envelope it branches on.
+  - **There is no `DELETE` and no garbage collection.** For the same reason there is no
+    visibility check: nothing knows which articles reference a file, so a delete breaks
+    articles silently, and unlike an article (F11) an upload has no version history to
+    recover from. It waits for an editor that can show a teacher where a file is used.
+
+  Also worth writing down: busboy decodes multipart filenames as **latin1** by default, so
+  `Guía de TPs.pdf` is stored as `GuÃ­a de TPs.pdf` forever unless `defParamCharset: "utf8"`
+  is set. Measured against multer 2.4.0.
+
 ### F10 · Embeds
 
-- [x] **Status:** decided
+- [x] **Status:** decided — waits for the renderer
 - **Decision:** Allowlisted iframes: YouTube, Google Slides, CodePen. The allowlist lives in
   code, not config. The old "presentaciones" articles were mostly this.
+
+  **Judged 2026-09-20, with F9, and deliberately left unbuilt.** It is pure render-side:
+  no schema, no route, no infra, and with the api serving Markdown verbatim (F7) there is
+  no api surface for it at all. The allowlist belongs to the renderer a person writes
+  (F44), beside `:::callout` and `::download`. Putting it in the api now would be code
+  nothing calls, in the layer that deliberately does not own how content looks.
 
 ### F11 · Drafts and revision history
 
@@ -668,8 +715,12 @@ worked example).
   | `login_flow`       | the `state` and PKCE verifier between `/api/auth/login` and its callback, 600 s (F3)                                                                                                    | —                                                                                                      |
 
   The bytes of an upload live on the volume at a path derived from the id; the row is the
-  index, which is what makes listing, quotas and garbage collection possible. Serving a file
-  checks the visibility of the articles that reference it.
+  index, which is what makes listing, quotas and garbage collection possible. ~~Serving a
+  file checks the visibility of the articles that reference it.~~ **Reopened 2026-09-20
+  (slice 6): it cannot be built and should not be.** The api parses no Markdown (F7, F44),
+  so it cannot know which articles reference an upload, and the check would only have
+  stopped somebody guessing a uuid. An upload is subject-scoped and served to anybody
+  holding its id — F9 has the full reasoning and the upgrade path.
 
 ### F38 · A result is a record of what a student did
 

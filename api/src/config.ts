@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 /**
  * Everything this process reads from its environment, validated once at boot.
@@ -16,6 +18,13 @@ export interface Config {
   databaseUrl: string;
   /** Read from `DATABASE_PASSWORD_FILE`, the mounted secret. */
   databasePassword: string | undefined;
+  /**
+   * Where the bytes of an upload live (F9) — the container side of the
+   * `tic-campus-uploads` compose volume. A laptop gets a directory under
+   * `tmpdir()` instead, because `/var/lib` is not writable there and a default
+   * that needs `sudo` to try a feature is a default nobody uses.
+   */
+  uploadsDir: string;
   /**
    * `undefined` when no client secret is configured, which is a laptop with no
    * tic-auth to talk to. The four `/api/auth/*` routes then answer **404** — not
@@ -185,6 +194,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     production,
     databaseUrl: required(env, "DATABASE_URL"),
     databasePassword,
+    uploadsDir: withDefault(
+      env,
+      "UPLOADS_DIR",
+      production
+        ? "/var/lib/tic-campus/uploads"
+        : join(tmpdir(), "tic-campus-uploads"),
+    ),
     auth: loadAuth(env, production),
   };
 }

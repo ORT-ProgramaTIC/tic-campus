@@ -29,6 +29,13 @@
       "when": 1789922462768,
       "tag": "0003_the_offering_contents",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789934195041,
+      "tag": "0004_the_uploads",
+      "breakpoints": true
     }
   ]
 }
