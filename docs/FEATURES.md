@@ -550,3 +550,38 @@ feedback, recorded_by, recorded_at)`, unique on the first two. **It carries no c
 - **Decision:** The year-lock date (F35) and the global scale presets (F19) are constants in
   the api, overridable by environment where the box needs it. A settings table for two
   values would be a screen, a migration and a cache for something that changes once a year.
+
+---
+
+## Group K — The interface
+
+### F43 · A brand redesign, not today's identity
+
+- [ ] **Status:** open
+- **Prior art:** `../BRAND.md` — the tic family's rules, and the committed Frontify export
+  `tic-host/web/src/brand/colors.oco` that is their source of truth, with
+  `tic-host/web/src/app.css` as the reference implementation. That document names campus as
+  **the one member running a separate visual identity today** (Lato + Special Elite, its own
+  `sh-*` ramp, its own favicon) and deliberately does not retroactively repaint it: it
+  shares only the tag colours. So the rebuild is the moment to decide, rather than a
+  decision already made elsewhere.
+- **To settle:**
+  - Does 2027 campus adopt the family palette and type, keep its own and refresh it, or land
+    somewhere between — family colours, campus type?
+  - Does the redesign come before the first screens, or do the screens ship in something
+    plain and get repainted once?
+  - The favicon, the logo and the name treatment are part of this, not a follow-up.
+- **Decision:** _(not made)_
+
+### F44 · The interface is built by hand
+
+- [x] **Status:** decided
+- **Decision:** The GUI is designed and written **by a person**, not generated. That covers
+  layout, components, styling, the React app's structure and the F43 redesign. Agents build
+  the api, the schema, the migrations, the deploy and the plumbing, and stop at that
+  boundary: they may wire a screen up to a route or fix a bug in one that exists, but they
+  do not invent the interface.
+  The reason is that the look is the part with taste in it, and F43 is still open — a
+  generated UI would be a thing to throw away twice, once when the brand is decided and
+  again when it turns out not to be what anyone wanted. It is also the part of the rebuild
+  worth doing by hand for its own sake.
