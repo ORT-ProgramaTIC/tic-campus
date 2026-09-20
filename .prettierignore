@@ -1,1 +1,5 @@
 pnpm-lock.yaml
+# drizzle-kit writes `meta/_journal.json` and the snapshots, and rewrites them on
+# every generate. Formatting them is a diff prettier and drizzle-kit take turns
+# undoing.
+api/drizzle/

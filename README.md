@@ -8,6 +8,8 @@ pnpm build          # both
 pnpm typecheck
 pnpm test           # the api's own checks
 pnpm format         # prettier
+
+pnpm --filter tic-campus-api db:generate   # after editing api/src/db/schema/
 ```
 
 `docs/FEATURES.md` is what this is being built to.
@@ -31,13 +33,27 @@ deliberately is not. Four roles, two of them created by hand at install time
 `CREATE` anywhere, and migrations run as **`campus_owner`** from the host. Reads of people,
 courses and offerings go to tic-auth's `directory.*` views; campus owns no roster.
 
-Two files live only on the box, both root-owned 0600 and gitignored:
-`.env` (from `.env.example`) and `secrets/db_svc_password`. `make deploy` refuses before
-rolling if either is missing, or if `tic-db` is not healthy.
+Three files live only on the box, all root-owned 0600 and gitignored: `.env` (from
+`.env.example`), `secrets/db_svc_password` and `secrets/db_owner_password`. The first two
+are what the container needs and `make deploy` refuses before rolling if either is missing,
+or if `tic-db` is not healthy; the third is read on the host by `make migrate` and never
+enters a container.
+
+Campus owns three tables so far — the article library and the program units
+(`api/src/db/schema/`, `docs/FEATURES.md` F37). Schema changes are Drizzle migrations:
+
+```sh
+make migrate        # `make deploy` already does this, after the roll
+```
+
+Boot does **not** migrate and cannot, since `campus_svc` holds no `CREATE`. So a container
+serving against a schema older than its own code is a state that exists, and `/api/readyz`
+is what says so.
 
 `/api/health` is liveness and says nothing about the database — restarting the container
-does not fix a database that is down. `/api/readyz` is the one that reads `directory.*`,
-and answers 503 with the reason when it cannot.
+does not fix a database that is down. `/api/readyz` is the one that reads `directory.*` and
+counts the applied migrations against the ones this build carries, and answers 503 naming
+which of the two failed.
 
 ## Doctor
 
@@ -57,7 +73,8 @@ executable file: on the box Node exists only inside the containers. Every findin
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `containers-settled` | **fail** a container named in `docker-compose.yml` is missing, not `running` across three reads, or `unhealthy` (the api's is `/api/health`) · **warn** health `starting`, or a restart within the last minute |
 | `web-api-proxy`      | **fail** `/api/health` asked inside `tic-campus-web` does not come back from the api — the nginx hop neither healthcheck covers                                                                                |
-| `db-reachable`       | **fail** `/api/readyz` asked inside `tic-campus-api` does not answer ok — the stack is up and cannot serve anything that needs data, which no healthcheck notices                                              |
+| `db-reachable`       | **fail** the `db` half of `/api/readyz`, asked inside `tic-campus-api`, is not ok — the stack is up and cannot serve anything that needs data, which no healthcheck notices                                    |
+| `schema-current`     | **fail** the database has fewer migrations applied than this build carries — `make deploy` rolled and `make migrate` was skipped or failed, so the new routes run against an old schema                        |
 
 Left to tic-platform, because a stack checks only what it deploys: `/opt/tic-campus`'s git
 drift, `tic-campus-edge` membership, and the origin through tic-proxy (which `make smoke`

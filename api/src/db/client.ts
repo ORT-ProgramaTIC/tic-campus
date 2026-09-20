@@ -1,6 +1,8 @@
+import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import { parseIntoClientConfig } from "pg-connection-string";
 import type { Config } from "../config.js";
+import * as schema from "./schema/index.js";
 
 /**
  * The pool, as `campus_svc`. It holds no CREATE anywhere: migrations connect as
@@ -35,4 +37,18 @@ export function createPool(config: Config): Pool {
     // "too many connections for role", which is a database-wide symptom.
     max: 10,
   });
+}
+
+export type Db = NodePgDatabase<typeof schema>;
+
+/**
+ * The ORM over that pool, still as `campus_svc`. It is handed the same barrel
+ * `drizzle.config.ts` generates migrations from, so what the queries know about
+ * and what the database was given cannot drift.
+ *
+ * `directory.ts` is not in that barrel and is imported where it is read —
+ * listing it would put `CREATE TABLE "public"."user"` in a campus migration.
+ */
+export function createDb(pool: Pool): Db {
+  return drizzle(pool, { schema });
 }

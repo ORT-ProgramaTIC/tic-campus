@@ -383,26 +383,47 @@ def check_web_api_proxy(ctx: Ctx) -> list[Finding]:
     ]
 
 
-def check_db_reachable(ctx: Ctx) -> list[Finding]:
-    """`/api/readyz` asked from inside tic-campus-api: does this process reach tic-db as
-    `campus_svc` and read `directory.*`? The liveness healthcheck deliberately says nothing
-    about the database — restarting the container does not fix a database that is down — so
-    a stack whose every container is healthy can still serve nothing. Asked *inside* the api
-    rather than through nginx so a failure here is never the proxy hop, which is the check
-    above."""
-    subject = Subject.container(API)
+def _readyz(ctx: Ctx) -> tuple[dict[str, Any] | None, str]:
+    """`/api/readyz`'s body, asked from inside tic-campus-api, parsed. Returns the document
+    and a one-line detail for when there is no document.
+
+    Asked *inside* the api rather than through nginx so a failure is never the proxy hop,
+    which is its own check above. The liveness healthcheck deliberately says nothing about
+    the database — restarting the container does not fix a database that is down — so a
+    stack whose every container is healthy can still serve nothing.
+
+    **The HTTP status is deliberately ignored.** `/api/readyz` answers 503 when EITHER half
+    is wrong, and the two checks below each judge their own key: gating on `r.ok` here
+    would make both of them fail whenever one does, and report a stale schema as a database
+    nobody can reach."""
     # node:24-slim carries no curl and no wget; global fetch is in the image already.
     done = ctx.in_container(
         API,
         "node",
         "-e",
         "fetch('http://127.0.0.1:3000/api/readyz')"
-        ".then(async r=>{console.log(await r.text());process.exit(r.ok?0:1)})"
-        ".catch(e=>{console.log(String(e));process.exit(1)})",
+        ".then(async r=>console.log(await r.text()))"
+        ".catch(e=>{console.log(JSON.stringify({error:String(e)}));process.exit(1)})",
     )
-    if done.rc == 0 and '"ok"' in done.out:
-        return [ok("tic-campus-api llega a tic-db como campus_svc", subject=subject)]
     detail = _first_line(done.out) or _first_line(done.err) or f"node salió {done.rc}"
+    try:
+        body = json.loads(done.out)
+    except json.JSONDecodeError:
+        return None, detail
+    return (body if isinstance(body, dict) else None), detail
+
+
+def check_db_reachable(ctx: Ctx) -> list[Finding]:
+    """Does this process reach tic-db as `campus_svc` and read `directory.*`? That is the
+    `db` half of `/api/readyz`, and it is about the database and this stack's secrets —
+    never about whether anybody ran `make migrate`, which is the check below."""
+    subject = Subject.container(API)
+    body, detail = _readyz(ctx)
+    half = body.get("db") if body else None
+    if isinstance(half, dict):
+        detail = _first_line(str(half.get("detail", ""))) or detail
+        if half.get("ok"):
+            return [ok(f"tic-campus-api llega a tic-db como campus_svc ({detail})", subject=subject)]
     return [
         fail(
             f"tic-campus-api no llegó a la base ({detail}), así que el stack está arriba y "
@@ -411,6 +432,53 @@ def check_db_reachable(ctx: Ctx) -> list[Finding]:
                 "revisá que tic-db esté healthy, que .env apunte a campus_svc y que "
                 "secrets/db_svc_password tenga su contraseña; docker logs tic-campus-api"
             ),
+            subject=subject,
+        )
+    ]
+
+
+def check_schema_current(ctx: Ctx) -> list[Finding]:
+    """Is the database's schema the one the running build was written against? Boot does not
+    migrate and cannot — the container connects as `campus_svc`, which holds CREATE nowhere
+    — so `make migrate` is a step somebody can skip or watch fail, and the container comes
+    up either way. Without this the first symptom is a 500 from whichever route happens to
+    touch a table that is not there yet."""
+    subject = Subject.container(API)
+    body, detail = _readyz(ctx)
+    half = body.get("migrations") if body else None
+    remedy = "make migrate  # como root en /opt/tic-campus"
+    if not isinstance(half, dict):
+        return [
+            fail(
+                f"/api/readyz no informó las migraciones ({detail}), así que no se sabe si "
+                "el schema campus es el que este build espera",
+                remedy="docker logs tic-campus-api",
+                subject=subject,
+            )
+        ]
+    applied, carried = half.get("applied"), half.get("carried")
+    if half.get("ok"):
+        return [
+            ok(
+                f"las migraciones del schema campus están al día ({applied} de {carried})",
+                subject=subject,
+            )
+        ]
+    if applied is None:
+        return [
+            fail(
+                f"no se pudo leer campus.__drizzle_migrations "
+                f"({_first_line(str(half.get('detail', '')))}), así que el schema campus "
+                "todavía no tiene ni la tabla de migraciones",
+                remedy=remedy,
+                subject=subject,
+            )
+        ]
+    return [
+        fail(
+            f"faltan migraciones: la base tiene {applied} de {carried}, así que las rutas "
+            "nuevas fallan contra un schema viejo",
+            remedy=remedy,
             subject=subject,
         )
     ]
@@ -431,6 +499,7 @@ CHECKS: list[Check] = [
     Check("containers-settled", "estado de los containers del stack", check_containers_settled),
     Check("web-api-proxy", "proxy /api/ de tic-campus-web", check_web_api_proxy),
     Check("db-reachable", "acceso de la api a tic-db", check_db_reachable),
+    Check("schema-current", "migraciones aplicadas en el schema campus", check_schema_current),
 ]
 
 assert len({check.id for check in CHECKS}) == len(CHECKS), "duplicate check id in CHECKS"

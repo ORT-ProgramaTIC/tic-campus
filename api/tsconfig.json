@@ -1,4 +1,9 @@
 {
   "extends": "../tsconfig.base.json",
-  "compilerOptions": { "rootDir": "src", "outDir": "dist", "types": ["node"] }
+  // `include` rather than the default of everything under this directory:
+  // `drizzle.config.ts` lives at the package root, outside `rootDir`, and tsc
+  // refuses a file it is asked to emit from above its own root. drizzle-kit
+  // reads that file itself, so nothing needs to compile it.
+  "compilerOptions": { "rootDir": "src", "outDir": "dist", "types": ["node"] },
+  "include": ["src"]
 }

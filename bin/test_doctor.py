@@ -122,20 +122,50 @@ class TestChecks(unittest.TestCase):
         # The SPA shell on a 200 is the api location falling through to try_files.
         self.assertEqual(proxy(Completed(0, "<!doctype html>", "")), ["fail"])
 
-    def test_db_reachable_reads_the_apis_own_readiness(self) -> None:
-        def readyz(done: Completed) -> list[str]:
-            run = _box({"docker exec tic-campus-api node": done})
-            return _severities(doctor.check_db_reachable(Ctx(run=run, root=doctor.ROOT)))
+    @staticmethod
+    def _readyz(body: str, rc: int = 0) -> Ctx:
+        return Ctx(run=_box({"docker exec tic-campus-api node": Completed(rc, body, "")}), root=doctor.ROOT)
 
-        self.assertEqual(readyz(Completed(0, '{"status":"ok","db":"directory.subject: 12"}', "")), ["ok"])
-        # 503: the process answers, the database does not — which is the case a
-        # liveness healthcheck reports as healthy.
-        self.assertEqual(
-            readyz(Completed(1, '{"status":"error","db":"password authentication failed"}', "")),
-            ["fail"],
-        )
-        # The api is up but /api/readyz is not routed: a 404 body carries no "ok".
-        self.assertEqual(readyz(Completed(0, "Not Found", "")), ["fail"])
+    # The shape /api/readyz answers with, so the two checks below can be driven past each
+    # other: each reads one key and neither looks at the HTTP status.
+    _READY = (
+        '{"status":"ok","db":{"ok":true,"detail":"directory.subject: 12"},'
+        '"migrations":{"ok":true,"applied":1,"carried":1}}'
+    )
+    _STALE = (
+        '{"status":"error","db":{"ok":true,"detail":"directory.subject: 12"},'
+        '"migrations":{"ok":false,"applied":0,"carried":1}}'
+    )
+    _NO_DB = (
+        '{"status":"error","db":{"ok":false,"detail":"password authentication failed"},'
+        '"migrations":{"ok":false,"applied":null,"carried":1,"detail":"no existe la relación"}}'
+    )
+
+    def test_db_reachable_reads_the_apis_own_readiness(self) -> None:
+        def db(body: str, rc: int = 0) -> list[str]:
+            return _severities(doctor.check_db_reachable(self._readyz(body, rc)))
+
+        self.assertEqual(db(self._READY), ["ok"])
+        # The database does not answer — which is the case a liveness healthcheck reports
+        # as healthy. 503, so node exits 1.
+        self.assertEqual(db(self._NO_DB, rc=1), ["fail"])
+        # **A stale schema is not this check's failure.** /api/readyz is 503 and node exits
+        # 1, and the database is still perfectly reachable.
+        self.assertEqual(db(self._STALE, rc=1), ["ok"])
+        # The api is up but /api/readyz is not routed: a 404 body is not even JSON.
+        self.assertEqual(db("Not Found", rc=1), ["fail"])
+
+    def test_schema_current_counts_applied_against_carried(self) -> None:
+        def schema(body: str, rc: int = 0) -> list[str]:
+            return _severities(doctor.check_schema_current(self._readyz(body, rc)))
+
+        self.assertEqual(schema(self._READY), ["ok"])
+        # Rolled without migrating: the containers are healthy and the schema is a version
+        # behind, which is exactly what `make migrate` fixes.
+        self.assertEqual(schema(self._STALE, rc=1), ["fail"])
+        # Never migrated at all: there is no bookkeeping table to count.
+        self.assertEqual(schema(self._NO_DB, rc=1), ["fail"])
+        self.assertEqual(schema("Not Found", rc=1), ["fail"])
 
 
 if __name__ == "__main__":

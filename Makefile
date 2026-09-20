@@ -15,7 +15,22 @@ DB_CONTAINER ?= tic-db
 # install step that was missed.
 MOUNTED_SECRETS ?= secrets/db_svc_password
 
-.PHONY: help deploy rollout config smoke doctor
+# Migrations run as the schema OWNER, never as the runtime role. campus_svc is a
+# member of campus_app, which holds DML on `campus` and deliberately no CREATE —
+# the asymmetry that makes tic-auth's grant matrix real rather than decorative
+# (tic-auth/docs/CONSISTENCY.md). So this password is NOT in MOUNTED_SECRETS: it
+# is read here on the host and never enters a container.
+#
+# It is not in the URL either. It goes through PGPASSWORD, which libpq and
+# node-postgres both read, because a password with the wrong byte in it breaks
+# URL parsing before the database is ever reached. Measured in MEV against
+# pg-connection-string@2.x: a '/', '?' or '#' throws `Invalid URL`, and a '%XX'
+# sequence is silently percent-DECODED into a different byte. `openssl rand
+# -hex 32`, as .env.example says, sidesteps all of it.
+DB_OWNER_PASSWORD_FILE ?= secrets/db_owner_password
+MIGRATION_DB_URL ?= postgresql://campus_owner@tic-db:5432/tic_auth
+
+.PHONY: help deploy rollout config migrate smoke doctor
 help:  ## list targets
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*##/\t/' | expand -t22
 
@@ -53,10 +68,31 @@ rollout:  ## the half of `deploy` after the pull — not called directly
 	    i=$$((i+1)); sleep 1; done; \
 	  [ $$ok -ge 3 ] || { echo "FAIL: $$svc did not settle — docker compose logs $$svc"; exit 1; }; \
 	  echo "ok: $$svc is running"; done
+	$(MAKE) migrate
 	$(MAKE) smoke
 
 config:  ## validate docker-compose.yml
 	docker compose config --quiet
+
+migrate:  ## aplicar las migraciones como campus_owner — `deploy` ya lo hace
+	@test -r $(DB_OWNER_PASSWORD_FILE) || { \
+	  echo "FAIL: cannot read $(DB_OWNER_PASSWORD_FILE) — migrations run as the schema owner"; \
+	  echo "      and need its password."; \
+	  echo "      Create it with \`install -m 0600 -o root -g root /dev/null $(DB_OWNER_PASSWORD_FILE)\`"; \
+	  echo "      and paste campus_owner's password. See README, 'The database'."; exit 1; }
+	@# THE migration path, and the only one. Boot does not migrate and cannot:
+	@# the container connects as campus_svc, which holds no CREATE anywhere. So
+	@# the one command allowed to restructure anything is the only one holding
+	@# CREATE, and a container serving against a schema this has not been run on
+	@# reports it at /api/readyz rather than 500ing on whichever route notices.
+	@#
+	@# `exec` into the api container rather than a container of its own: the
+	@# migrator is `dist/db/migrate.js` in that same image, and tic-db is
+	@# `internal: true` — the api is already on that network.
+	docker compose exec -T \
+	  -e DATABASE_URL="$(MIGRATION_DB_URL)" \
+	  -e PGPASSWORD="$$(cat $(DB_OWNER_PASSWORD_FILE))" \
+	  api node dist/db/migrate.js
 
 smoke:  ## through tic-proxy with the real Host header, not around it
 	@curl -fsS -H 'Host: $(HOST)' $(SMOKE_BASE)/api/health | grep -q '"ok"' \
@@ -66,9 +102,10 @@ smoke:  ## through tic-proxy with the real Host header, not around it
 	  && echo "ok: / serves the frontend" \
 	  || { echo "FAIL: / did not serve the frontend"; exit 1; }
 	@# Liveness says the process answers; this says it reached the database as
-	@# campus_svc and the directory grants are there. 503 carries the reason.
-	@curl -fsS -H 'Host: $(HOST)' $(SMOKE_BASE)/api/readyz | grep -q '"ok"' \
-	  && echo "ok: /api/readyz — the api reaches tic-db as campus_svc" \
+	@# campus_svc, that the directory grants are there, and that the schema is
+	@# the one this build was written against. 503 carries which of the three.
+	@curl -fsS -H 'Host: $(HOST)' $(SMOKE_BASE)/api/readyz | grep -q '"status":"ok"' \
+	  && echo "ok: /api/readyz — tic-db as campus_svc, migraciones al día" \
 	  || { echo "FAIL: /api/readyz — see \`docker logs tic-campus-api\` and \`curl -H 'Host: $(HOST)' $(SMOKE_BASE)/api/readyz\`"; exit 1; }
 
 # This stack's own diagnosis, in tic-host's contract (README, "Doctor"). Plain python3 on
