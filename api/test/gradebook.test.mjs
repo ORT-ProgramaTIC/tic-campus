@@ -208,3 +208,21 @@ test("a setup refuses what would not round-trip", () => {
     "a level with no number is not aggregatable (F38)",
   );
 });
+
+test("the redo policy is one of three words, or absent", () => {
+  const ok = { groups: [], terms: [], scales: [] };
+  // Absent stays absent, the rule the formulas already follow: a panel that
+  // does not know about redos must not reset the policy (F23).
+  assert.equal("redoPolicy" in checkSetup(ok), false);
+  assert.equal(
+    checkSetup({ ...ok, redoPolicy: "average" }).redoPolicy,
+    "average",
+  );
+  for (const bad of ["lo que sea", "REPLACE", null, 1]) {
+    assert.throws(
+      () => checkSetup({ ...ok, redoPolicy: bad }),
+      (cause) => cause.status === 400,
+      String(bad),
+    );
+  }
+});

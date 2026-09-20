@@ -57,6 +57,13 @@
       "when": 1789941588468,
       "tag": "0007_the_official_grade",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789943465033,
+      "tag": "0008_the_redo",
+      "breakpoints": true
     }
   ]
 }

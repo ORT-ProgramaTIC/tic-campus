@@ -66,6 +66,23 @@ export const offeringHome = campus.table(
      * that renames a term has to be able to fix it in the same statement.
      */
     finalFormula: text("final_formula"),
+    /**
+     * What a redo's result does to the marks it covers (F23): `replace`, `max`
+     * or `average`. Per offering and not per school, because it is a teacher's
+     * call and not an admin's — which is what keeps it off F42's list of
+     * constants that live in code, and puts it here beside the other
+     * per-offering setting the gradebook's one `PUT` writes.
+     *
+     * **The default is `max`, not `replace`.** F23's own sentence says a redo's
+     * result replaces the original, and it stays available as a policy — but a
+     * default is what an offering gets when nobody decided, and "a redo can
+     * only help" is the answer that is wrong in the student's favour. A teacher
+     * who wants a redo to be able to lower a mark says so.
+     *
+     * `text` with the three values checked in the api, and **no `CHECK` and no
+     * `pgEnum`** — the reason is the one `offering_article.value_type` gives.
+     */
+    redoPolicy: text("redo_policy").notNull().default("max"),
   },
   // Total, never partial: `ON CONFLICT (offering_id)` needs this as its target,
   // and a `WHERE archived_at IS NULL` index is not one.

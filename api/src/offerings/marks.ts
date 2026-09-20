@@ -8,6 +8,7 @@ import {
   parseFormula,
 } from "./formula.js";
 import type { Capabilities } from "./access.js";
+import type { RedoPolicy } from "./gradebook.js";
 import { type Activity, type Mark, resultsVisible } from "./results.js";
 
 /**
@@ -73,6 +74,9 @@ export interface Setup {
   groups: { id: string; name: string }[];
   terms: { id: string; name: string; formula: string | null }[];
   finalFormula: string | null;
+  /** F23. The type only — `offerings/gradebook.ts` owns the value domain, and a
+   *  type import keeps this file's runtime edges exactly where they were. */
+  redoPolicy: RedoPolicy;
 }
 
 export interface StudentMarks {
@@ -128,6 +132,12 @@ export function computeMarks(
   // Bucketed once for everybody rather than filtered per student per term.
   const buckets = new Map<string, Activity[]>();
   for (const activity of activities) {
+    // **A redo never counts on its own** (F23): it acts through the marks it
+    // covers and nowhere else. Left in, a redo covering TP2 would make
+    // `avg(tps)` a mean of four numbers instead of three, and a done redo would
+    // add one to `done_ratio`'s denominator — the recuperatorio would become a
+    // fourth TP for everybody who never needed one.
+    if (activity.covers.length > 0) continue;
     if (activity.groupId === null || activity.termId === null) continue;
     const key = `${activity.termId}\u0000${activity.groupId}`;
     const already = buckets.get(key);
@@ -137,7 +147,14 @@ export function computeMarks(
 
   const marks = new Map<number, StudentMarks>();
   for (const studentId of studentIds) {
-    const mine = byStudent.get(studentId) ?? new Map<string, number>();
+    // **Redos resolve here, in front of the evaluator** (F23) — a rewritten
+    // `mine`, so `groupValue` stays the dumb function F20 made it and never
+    // learns that a mark can come from somewhere other than its own activity.
+    const mine = resolveRedos(
+      byStudent.get(studentId) ?? new Map<string, number>(),
+      activities,
+      setup.redoPolicy,
+    );
     const terms: Record<string, Computed> = {};
     const termValues: Record<string, Value> = {};
 
@@ -231,6 +248,68 @@ function evaluate(
 ): Computed {
   if ("error" in tree) return tree;
   return evaluateFormula(tree, scope);
+}
+
+/**
+ * **What a redo does to the marks it covers** (F23), for one student — the
+ * resolution step in front of `groupValue`.
+ *
+ * It takes the map of *what was recorded* and returns the map of *what counts*.
+ * Pure, and it needs no query: the coverage rides on `Activity.covers`, the way
+ * the activities and the results already arrive as data.
+ *
+ * Three things it decides, and each has a test naming the other behaviour:
+ *
+ * - **An unmarked redo leaves the original standing.** A blank is an absent row
+ *   and nothing else (F38), so a recuperatorio nobody sat is a recuperatorio
+ *   that has not happened — not a zero, and not a reason to blank the TP.
+ * - **A redo over a blank original replaces it.** That is what a recuperatorio
+ *   is *for*: the student who missed the TP is exactly who sits it. Every
+ *   policy agrees here, because only present values participate — F20's blank
+ *   rule, one level down.
+ * - **The list it walks is the list the caller may see**, so publishing needs
+ *   no new rule at all. `publishedOnly` already removed an unpublished redo
+ *   before this runs, which is why `resultsVisible` does not grow a fourth
+ *   meaning for F23 the way F22 did not give it a third.
+ *
+ * One pass, in `position` order: a redo may not cover another redo (refused in
+ * `content.ts`), so there is no chain to follow, and two redos over the same TP
+ * fold left — under `replace`, the later one on the page wins.
+ */
+export function resolveRedos(
+  recorded: Map<string, number>,
+  activities: Activity[],
+  policy: RedoPolicy,
+): Map<string, number> {
+  let out = recorded;
+  for (const redo of activities) {
+    if (redo.covers.length === 0) continue;
+    const got = recorded.get(redo.id);
+    if (got === undefined) continue;
+    // Copied only once something actually changes: most students in most
+    // offerings have no redo at all, and this runs per student.
+    if (out === recorded) out = new Map(recorded);
+    for (const coveredId of redo.covers) {
+      out.set(coveredId, combine(out.get(coveredId), got, policy));
+    }
+  }
+  return out;
+}
+
+function combine(
+  before: number | undefined,
+  redo: number,
+  policy: RedoPolicy,
+): number {
+  if (before === undefined) return redo;
+  if (policy === "replace") return redo;
+  if (policy === "max") return Math.max(before, redo);
+  // Rounded to ten decimals for the reason `num()` in `formula.ts` is (F20),
+  // and spelled out here rather than exported from there: that one wraps its
+  // result in a `Value`, and this is a plain mark that has not reached the
+  // evaluator yet. An average of 4.1 and 8 is 6.050000000000001 otherwise, and
+  // a threshold a teacher wrote as `if(x >= 6.05, …)` misses it.
+  return Math.round(((before + redo) / 2) * 1e10) / 1e10;
 }
 
 /**

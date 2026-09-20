@@ -83,6 +83,27 @@ export const SCALE_PRESETS: ScalePreset[] = [
   },
 ];
 
+/* ── The redo policy (F23) ───────────────────────────────────────────────── */
+
+/**
+ * What a redo's result does to the mark it covers. The whole of what
+ * `offering_home.redo_policy` may be — there is no `CHECK` behind it, for the
+ * reason `value_type` gives.
+ *
+ * It lives here rather than in `marks.ts` because the setup is what owns it:
+ * `readSetup` reads it, `checkSetup` guards it, and the evaluator only needs
+ * the *type*, which costs it no import at runtime.
+ */
+export const REDO_POLICIES = ["replace", "max", "average"] as const;
+export type RedoPolicy = (typeof REDO_POLICIES)[number];
+
+export function isRedoPolicy(raw: unknown): raw is RedoPolicy {
+  return (
+    typeof raw === "string" &&
+    (REDO_POLICIES as readonly string[]).includes(raw)
+  );
+}
+
 /* ── Reading ─────────────────────────────────────────────────────────────── */
 
 export interface Named {
@@ -113,6 +134,9 @@ export interface Setup {
    *  names. It rides in this payload rather than one of its own because the
    *  save that renames a term has to be able to fix it in the same body. */
   finalFormula: string | null;
+  /** What a redo does to what it covers (F23). Also per offering, so it travels
+   *  with the other per-offering setting rather than in a route of its own. */
+  redoPolicy: RedoPolicy;
 }
 
 /** Four reads and a regroup. The levels come back in one query and are nested
@@ -160,7 +184,10 @@ export async function readSetup(db: Db, homeId: string): Promise<Setup> {
       )
       .orderBy(offeringScaleLevel.position),
     db
-      .select({ finalFormula: offeringHome.finalFormula })
+      .select({
+        finalFormula: offeringHome.finalFormula,
+        redoPolicy: offeringHome.redoPolicy,
+      })
       .from(offeringHome)
       .where(eq(offeringHome.id, homeId)),
   ]);
@@ -175,7 +202,18 @@ export async function readSetup(db: Db, homeId: string): Promise<Setup> {
         .map(({ scaleId: _scaleId, ...level }) => level),
     })),
     finalFormula: home[0]?.finalFormula ?? null,
+    // The column is `NOT NULL DEFAULT 'max'`, so the fallback is for the home
+    // that is not there at all — and it has to agree with the default, or an
+    // offering's policy would depend on which read answered.
+    redoPolicy: asPolicy(home[0]?.redoPolicy),
   };
+}
+
+/** The stored text is only as narrow as `checkSetup` made it; a row written
+ *  before the domain gained a value reads as the default rather than as a
+ *  string the evaluator would not recognise. */
+function asPolicy(raw: string | undefined): RedoPolicy {
+  return isRedoPolicy(raw) ? raw : "max";
 }
 
 /** The three `Named` tables project identically; this is the projection, not an
@@ -214,6 +252,11 @@ export interface SetupInput {
   terms: TermInput[];
   scales: ScaleInput[];
   finalFormula?: string | null;
+  /** `undefined` leaves it alone, the rule the formulas already follow: a panel
+   *  that does not know about redos must not reset the policy. There is no
+   *  `null` — every offering has one, and the absence of a redo is the absence
+   *  of a `redo_covers` row. */
+  redoPolicy?: RedoPolicy;
 }
 
 export async function writeSetup(
@@ -262,10 +305,17 @@ export async function writeSetup(
             .where(eq(offeringTerm.id, termId));
         }
       }
-      if (input.finalFormula !== undefined) {
+      if (input.finalFormula !== undefined || input.redoPolicy !== undefined) {
         await tx
           .update(offeringHome)
-          .set({ finalFormula: input.finalFormula })
+          .set({
+            ...(input.finalFormula === undefined
+              ? {}
+              : { finalFormula: input.finalFormula }),
+            ...(input.redoPolicy === undefined
+              ? {}
+              : { redoPolicy: input.redoPolicy }),
+          })
           .where(eq(offeringHome.id, homeId));
       }
       for (const [position, scale] of input.scales.entries()) {
@@ -656,7 +706,7 @@ export function checkSetup(raw: unknown): SetupInput {
   if (typeof raw !== "object" || raw === null) {
     throw new ApiError(400, "invalid_body", "Esperábamos un objeto.");
   }
-  const { groups, terms, scales, finalFormula } = raw as Record<
+  const { groups, terms, scales, finalFormula, redoPolicy } = raw as Record<
     string,
     unknown
   >;
@@ -665,7 +715,22 @@ export function checkSetup(raw: unknown): SetupInput {
     terms: checkTerms(terms),
     scales: checkScales(scales),
     ...checkOptionalFormula(finalFormula, "finalFormula"),
+    ...checkRedoPolicy(redoPolicy),
   };
+}
+
+/** Absent stays absent, like the formulas: spreading this writes no key, and no
+ *  key means leave the stored policy alone. */
+function checkRedoPolicy(raw: unknown): { redoPolicy?: RedoPolicy } {
+  if (raw === undefined) return {};
+  if (!isRedoPolicy(raw)) {
+    throw new ApiError(
+      400,
+      "invalid_body",
+      `La política de recuperatorios es una de éstas: ${REDO_POLICIES.join(", ")}.`,
+    );
+  }
+  return { redoPolicy: raw };
 }
 
 function checkTerms(raw: unknown): TermInput[] {

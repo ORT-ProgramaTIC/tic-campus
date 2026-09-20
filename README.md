@@ -212,6 +212,14 @@ The database is `make test-db`'s recipe with the container left running: the rol
 cluster-wide, so throw it away afterwards or the next run fails on
 `role "campus" already exists`.
 
+`api/scripts/harness-redos.mjs` is that whole setup written down — container, migrate, seed,
+sessions, api — with slice 10's assertions on the end. `node scripts/harness-redos.mjs` from
+inside `api/`, and it removes its container either way. **Copy it and replace the
+assertions** rather than writing the scaffolding again: the four things that cost time are
+in its preamble, and the sharpest is that the api must be spawned _after_ the migrate and
+the seed, or its pool points at a database with no schema and the symptom is an
+`ECONNREFUSED` that reads like a port problem.
+
 ## Las materias
 
 Campus owns no roster (F5). Who teaches what, who is enrolled in what and which courses an
@@ -304,7 +312,7 @@ DELETE /api/subjects/:id/program/:unitId               staff     borrar una unid
 POST   /api/subjects/:id/uploads                       staff     subir un archivo: multipart, campo «file» (F9)
 GET    /api/subjects/:id/uploads                       staff     los archivos de la materia, del último al primero
 GET    /api/uploads/:id                                público   los bytes (F9)
-PUT    /api/homes/:oferta/articles/:articleId          staff     usarlo: unidad, orden, fecha, visibilidad y notas (F4, F8, F18)
+PUT    /api/homes/:oferta/articles/:articleId          staff     usarlo: unidad, orden, fecha, visibilidad, notas y qué recupera (F4, F8, F18, F23)
 DELETE /api/homes/:oferta/articles/:articleId          staff     dejar de usarlo
 GET    /api/offerings/:año/:materia/:oferta            público   ahora con programa y artículos (F13, F15)
 GET    /api/offerings/:año/:materia/:oferta/:artículo  público   leer un artículo publicado (F4, F32)
@@ -395,7 +403,7 @@ read already has.
 
 ```
 GET    /api/homes/:oferta/gradebook                     staff     la grilla entera, de una (F26)
-PUT    /api/homes/:oferta/gradebook                     staff     grupos, trimestres y escalas — nunca borra (F39)
+PUT    /api/homes/:oferta/gradebook                     staff     grupos, trimestres, escalas y la política de recuperatorios — nunca borra (F39, F23)
 DELETE /api/homes/:oferta/gradebook/groups/:id          staff     409 si tiene actividades adentro
 DELETE /api/homes/:oferta/gradebook/terms/:id           staff     idem
 DELETE /api/homes/:oferta/gradebook/scales/:id          staff     idem; se lleva sus niveles
@@ -417,6 +425,17 @@ Two refusals are worth knowing before you save anything. A formula names a group
 rename that would orphan one is a `409`** (F39) — fix the name and the formula in the same
 body, which is why they travel together. And `deleteGroup`/`deleteTerm` refuse a row a
 formula names, under the same codes the in-use refusal already uses.
+
+**Los recuperatorios.** Un recuperatorio **es una actividad** (F23): lo que lo hace
+recuperatorio son las filas de `redo_covers`, que se escriben con `covers` en el mismo `PUT
+…/articles/:articleId` que le pone grupo y trimestre. No cuenta por sí solo — actúa sobre
+las notas que cubre y en ningún otro lado —, y qué les hace es la política de la oferta
+(`redoPolicy` en `PUT …/gradebook`): `max` por defecto, más `replace` y `average`. Sin nota
+cargada no pasa nada (una nota en blanco es una fila ausente, F38); sobre un original en
+blanco, la reemplaza en las tres políticas. Se resuelve **antes** del evaluador, sobre la
+lista de actividades que ese lector puede ver — que es por qué publicar un recuperatorio no
+necesitó una regla nueva. Un recuperatorio no recupera a otro recuperatorio, ni a sí mismo,
+y lleva el mismo tipo de nota que lo que cubre.
 
 `GET …/gradebook` returns `computed` per student, **both views side by side** (F24): `all` is
 what the teacher is looking at, `published` is what the student would see right now. One

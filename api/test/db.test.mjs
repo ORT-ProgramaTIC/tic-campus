@@ -320,6 +320,11 @@ test(
       offeringScaleId: null,
       dueAt: null,
       resultsPublishedAt: null,
+      // F23, and it grew here for the reason this object exists: TypeScript
+      // enforces the ten-field `UseInput` and a `.mjs` test does not, so a new
+      // grading column that nobody spells out here reaches `useArticle` as
+      // `undefined` and fails somewhere less obvious.
+      covers: [],
     };
 
     // Ordered before the deactivation below, which archives `ids.current` and
@@ -1599,6 +1604,221 @@ test(
           await myOfficialGrades(db, home.homeId, ids.student),
           [],
         );
+      },
+    );
+
+    // --- slice 10: a redo replaces what it covers (F23) ----------------------
+    //
+    // Still ordered before the deactivation below. `tp-sql` is a published
+    // numeric activity by now, worth 9 for `ids.student` and 8 for the departed
+    // `ids.teacher`, and `official_grade` is empty again — slice 9 cleaned up
+    // after itself. This block does too, so the archive subtest still sees what
+    // it expects.
+
+    await t.test(
+      "a redo covers an activity and replaces its mark",
+      async () => {
+        // **Insert, update and delete as `campus_svc`**, the rule every new table
+        // gets: a subtest that only read would prove nothing about the grant, and
+        // the symptom of a missing one is `permission denied` here and a green
+        // typecheck everywhere else.
+        const { home, setup } = await setupNow();
+        const tp = (await listActivities(db, home.homeId)).find(
+          (a) => a.slug === "tp-sql",
+        );
+
+        /** The mark the grid computes for the student, both ways. */
+        const marks = async () => {
+          const fresh = await readSetup(db, home.homeId);
+          const grid = await gradebook(db, home.homeId, ids.current);
+          const [student] = computeBothViews(
+            fresh,
+            grid.activities,
+            grid.results,
+            [ids.student],
+          );
+          return student.terms[fresh.terms[0].id];
+        };
+        assert.equal((await marks()).all.value, 9, "el punto de partida");
+
+        const recu = await createArticle(
+          db,
+          ids.subject,
+          "recuperatorio-sql",
+          "Recuperatorio TP SQL",
+        );
+        const useRedo = (extra) =>
+          useArticle(db, home.homeId, ids.subject, recu.id, {
+            programUnitId: null,
+            position: 9,
+            publishedAt: PUBLISHED,
+            restricted: false,
+            ...NOT_GRADED,
+            offeringGroupId: setup.groups[0].id,
+            offeringTermId: setup.terms[0].id,
+            valueType: "numeric",
+            covers: [tp.id],
+            ...extra,
+          });
+
+        // The refusals first, while nothing is written: the ids come from a body,
+        // so each of these is a trust boundary and not tidiness.
+        await assert.rejects(
+          () => useRedo({ covers: ["99999999-9999-4999-8999-999999999999"] }),
+          /no es de esta materia/,
+          "another offering's activity is not coverable",
+        );
+        await assert.rejects(
+          () => useRedo({ valueType: "done", covers: [tp.id] }),
+          /mismo tipo de nota/,
+          "a numeric TP is not recovered by a done redo",
+        );
+        await assert.rejects(
+          () =>
+            useArticle(db, home.homeId, ids.subject, recu.id, {
+              programUnitId: null,
+              position: 9,
+              publishedAt: PUBLISHED,
+              restricted: false,
+              ...NOT_GRADED,
+              covers: [tp.id],
+            }),
+          /no recupera nada/,
+          "without a value type it is not an activity, so it recovers nothing",
+        );
+
+        // Written, and unmarked: the original stands (F38's blank rule), and the
+        // redo is not a second TP in the average either.
+        await useRedo({ resultsPublishedAt: null });
+        const activities = await listActivities(db, home.homeId);
+        const redo = activities.find((a) => a.slug === "recuperatorio-sql");
+        assert.deepEqual(redo.covers, [tp.id]);
+        assert.deepEqual(
+          activities.find((a) => a.slug === "tp-sql").covers,
+          [],
+          "covers is the redo's, not the covered one's",
+        );
+        assert.equal((await marks()).all.value, 9, "un recuperatorio sin nota");
+
+        // Marked, and lower than the original. The default policy is `max`, so it
+        // does not pull the mark down — and the redo's marks are not published,
+        // so the student's own number does not move at all.
+        await saveResults(
+          db,
+          home.homeId,
+          [
+            {
+              studentId: ids.student,
+              activityId: redo.id,
+              clear: false,
+              value: 4,
+              feedback: null,
+            },
+          ],
+          ids.admin,
+        );
+        const underMax = await marks();
+        assert.equal(underMax.all.value, 9, "max: un recuperatorio sólo sube");
+        assert.equal(underMax.published.value, 9);
+
+        // The same rows under `replace`, which is the behaviour `max` refuses.
+        await writeSetup(db, home.homeId, {
+          groups: [],
+          terms: [],
+          scales: [],
+          redoPolicy: "replace",
+        });
+        const underReplace = await marks();
+        assert.equal(underReplace.all.value, 4, "replace: sí baja");
+        assert.equal(
+          underReplace.published.value,
+          9,
+          "y el estudiante sigue viendo el 9 hasta que se publique (F24)",
+        );
+
+        // Published, and now it is the student's number too — and their own read
+        // carries what the mark replaces, or the screen cannot say so (F44).
+        await useRedo({ resultsPublishedAt: PUBLISHED });
+        assert.equal((await marks()).published.value, 4);
+        const mine = await myResults(db, home.homeId, ids.student);
+        assert.deepEqual(
+          mine.find((r) => r.slug === "recuperatorio-sql").covers,
+          [tp.id],
+        );
+
+        // A redo of a redo is refused, which is what keeps resolution one pass.
+        const second = await createArticle(
+          db,
+          ids.subject,
+          "recuperatorio-2",
+          "Segundo recuperatorio",
+        );
+        await assert.rejects(
+          () =>
+            useArticle(db, home.homeId, ids.subject, second.id, {
+              programUnitId: null,
+              position: 10,
+              publishedAt: PUBLISHED,
+              restricted: false,
+              ...NOT_GRADED,
+              offeringTermId: setup.terms[0].id,
+              valueType: "numeric",
+              covers: [redo.id],
+            }),
+          /No se recupera un recuperatorio/,
+        );
+        await assert.rejects(
+          () => useRedo({ covers: [tp.id, redo.id] }),
+          /sí misma/,
+          "nor itself",
+        );
+
+        // The update: the coverage is written whole, so an empty list is a use
+        // that has stopped being a redo — and the mark goes back up by itself.
+        await useRedo({ covers: [] });
+        assert.deepEqual(
+          (await listActivities(db, home.homeId)).find(
+            (a) => a.slug === "recuperatorio-sql",
+          ).covers,
+          [],
+        );
+        assert.equal(
+          (await marks()).all.value,
+          6.5,
+          "ya no reemplaza: el 4 es una nota más del grupo",
+        );
+
+        // The delete, and the cleanup this block owes the subtests after it: the
+        // coverage rows go with the use on both sides, or the foreign key turns
+        // `removeUse` into a 500.
+        await useRedo({ covers: [tp.id] });
+        await saveResults(
+          db,
+          home.homeId,
+          [
+            {
+              studentId: ids.student,
+              activityId: redo.id,
+              clear: true,
+              feedback: null,
+            },
+          ],
+          ids.admin,
+        );
+        assert.equal(await removeUse(db, home.homeId, recu.id), true);
+        assert.equal(
+          (await listActivities(db, home.homeId)).some(
+            (a) => a.slug === "recuperatorio-sql",
+          ),
+          false,
+        );
+        await writeSetup(db, home.homeId, {
+          groups: [],
+          terms: [],
+          scales: [],
+          redoPolicy: "max",
+        });
+        assert.equal((await marks()).all.value, 9, "todo como estaba");
       },
     );
 

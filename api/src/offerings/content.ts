@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { article, articleVersion } from "../db/schema/article.js";
 import {
@@ -10,6 +10,7 @@ import { directoryOffering } from "../db/schema/directory.js";
 import { offeringArticle } from "../db/schema/offering-article.js";
 import { offeringHome } from "../db/schema/offering-home.js";
 import { programUnit } from "../db/schema/program-unit.js";
+import { redoCovers } from "../db/schema/redo-covers.js";
 import { result } from "../db/schema/result.js";
 import { ApiError } from "../middleware/errors.js";
 import { readProgram, type Unit } from "../library/program.js";
@@ -180,6 +181,18 @@ export interface UseInput {
   dueAt: Date | null;
   /** F24, and deliberately not `publishedAt` — see the note on the column. */
   resultsPublishedAt: Date | null;
+  /**
+   * F23: the activities this one **replaces**, by `offering_article.id`. Empty
+   * is the normal case and is what makes a use not a redo.
+   *
+   * It rides the use rather than a route of its own because it is the same kind
+   * of fact as the group and the term: one offering's decision about one
+   * article, saved by the panel that already saves the rest. Which also means
+   * it obeys this row's whole-row rule — a client that saves the panel without
+   * `covers` clears the coverage, recoverable by saving it again, the way
+   * `position` has been since slice 5.
+   */
+  covers: string[];
 }
 
 /**
@@ -280,13 +293,113 @@ export async function useArticle(
     }
   }
 
-  await db
-    .insert(offeringArticle)
-    .values({ offeringHomeId: homeId, articleId, ...input })
-    .onConflictDoUpdate({
-      target: [offeringArticle.offeringHomeId, offeringArticle.articleId],
-      set: input,
-    });
+  await checkCovers(db, homeId, input, existing?.id);
+
+  const { covers, ...row } = input;
+  // One transaction, because the coverage is part of the row from the outside:
+  // a save that wrote the activity and then failed to write what it replaces
+  // would leave a redo that silently stopped replacing anything, and the marks
+  // it fixes would go back down without anybody touching them.
+  await db.transaction(async (tx) => {
+    const [saved] = await tx
+      .insert(offeringArticle)
+      .values({ offeringHomeId: homeId, articleId, ...row })
+      .onConflictDoUpdate({
+        target: [offeringArticle.offeringHomeId, offeringArticle.articleId],
+        set: row,
+      })
+      .returning({ id: offeringArticle.id });
+    // Whole-row, like everything else here: what the body sent is what this use
+    // covers afterwards, and an empty list is a use that is no longer a redo.
+    await tx.delete(redoCovers).where(eq(redoCovers.redoId, saved!.id));
+    const wanted = [...new Set(covers)];
+    if (wanted.length > 0) {
+      await tx.insert(redoCovers).values(
+        wanted.map((coveredId) => ({
+          redoId: saved!.id,
+          coveredId,
+        })),
+      );
+    }
+  });
+}
+
+/**
+ * What a redo may cover (F23). The ids come from the body, so all four of these
+ * are trust boundaries rather than tidiness:
+ *
+ * - **an activity of *this* home**, or a teacher of any offering makes their
+ *   redo replace another offering's marks — the hole `saveResults` closes for
+ *   the ids it is handed.
+ * - **not itself**, which would be a mark replacing itself forever.
+ * - **not another redo**, which is what keeps resolution a single pass with no
+ *   cycle to detect (see the note on the table).
+ * - **the same kind of mark**, same `valueType` and same scale. A `numeric`
+ *   redo covering a `done` activity would land a 1 on it and read as *done* —
+ *   a failed recuperatorio marking the TP as handed in.
+ */
+async function checkCovers(
+  db: Db,
+  homeId: string,
+  input: UseInput,
+  selfId: string | undefined,
+): Promise<void> {
+  const wanted = [...new Set(input.covers)];
+  if (wanted.length === 0) return;
+  if (selfId !== undefined && wanted.includes(selfId)) {
+    throw new ApiError(
+      400,
+      "invalid_body",
+      "Una actividad no puede ser el recuperatorio de sí misma.",
+    );
+  }
+
+  const covered = await db
+    .select({
+      id: offeringArticle.id,
+      valueType: offeringArticle.valueType,
+      scaleId: offeringArticle.offeringScaleId,
+    })
+    .from(offeringArticle)
+    .where(
+      and(
+        eq(offeringArticle.offeringHomeId, homeId),
+        isNotNull(offeringArticle.valueType),
+        inArray(offeringArticle.id, wanted),
+      ),
+    );
+  if (covered.length !== wanted.length) {
+    throw new ApiError(
+      404,
+      "not_found",
+      "Alguna de las actividades que recupera no es de esta materia.",
+    );
+  }
+  for (const one of covered) {
+    if (
+      one.valueType !== input.valueType ||
+      one.scaleId !== input.offeringScaleId
+    ) {
+      throw new ApiError(
+        400,
+        "invalid_body",
+        "Un recuperatorio lleva el mismo tipo de nota que lo que recupera.",
+      );
+    }
+  }
+
+  const [chained] = await db
+    .select({ one: redoCovers.id })
+    .from(redoCovers)
+    .where(inArray(redoCovers.redoId, wanted))
+    .limit(1);
+  if (chained) {
+    throw new ApiError(
+      400,
+      "invalid_body",
+      "No se recupera un recuperatorio: poné las actividades originales en la lista.",
+    );
+  }
 }
 
 /**
@@ -319,6 +432,13 @@ async function checkGrading(
         400,
         "invalid_body",
         "Sin tipo de nota no es una actividad, así que no lleva grupo ni notas publicadas.",
+      );
+    }
+    if (input.covers.length > 0) {
+      throw new ApiError(
+        400,
+        "invalid_body",
+        "Sin tipo de nota no es una actividad, así que no recupera nada.",
       );
     }
     return;
@@ -403,6 +523,26 @@ export async function removeUse(
       "Esa actividad tiene notas cargadas. Borralas antes de sacarla de la materia.",
     );
   }
+
+  // **Both sides** (F23): the use may be a redo, and it may be something another
+  // redo covers. Either row left behind is a foreign key that turns a teacher's
+  // "quitar de la materia" into a 500. Dropped rather than refused — a use that
+  // is gone covers nothing and is covered by nothing, and the marks it was
+  // fixing are the ones the refusal above already protects.
+  const mine = db
+    .select({ id: offeringArticle.id })
+    .from(offeringArticle)
+    .where(
+      and(
+        eq(offeringArticle.offeringHomeId, homeId),
+        eq(offeringArticle.articleId, articleId),
+      ),
+    );
+  await db
+    .delete(redoCovers)
+    .where(
+      or(inArray(redoCovers.redoId, mine), inArray(redoCovers.coveredId, mine)),
+    );
 
   const removed = await db
     .delete(offeringArticle)

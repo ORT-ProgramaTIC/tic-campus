@@ -90,6 +90,7 @@ export function createHomeContentRoutes(db: Db): Router {
               body.resultsPublishedAt,
               "resultsPublishedAt",
             ),
+            covers: coversFrom(body.covers),
           },
         );
         res.status(200).json({ used: true });
@@ -124,6 +125,26 @@ function unitIdFrom(raw: unknown): string | null {
     throw new ApiError(400, "invalid_body", "`programUnitId` no es válido.");
   }
   return raw;
+}
+
+/** F23's list, shape only — whether these ids are activities of this home, and
+ *  of the right kind, is `checkCovers`'s question and not the body's. Absent is
+ *  an empty list, which is what "not a redo" is. */
+function coversFrom(raw: unknown): string[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw) || raw.length > 100) {
+    throw new ApiError(
+      400,
+      "invalid_body",
+      "`covers` es una lista de hasta 100 actividades.",
+    );
+  }
+  return raw.map((id) => {
+    if (!isUuid(id)) {
+      throw new ApiError(400, "invalid_body", "`covers` lleva ids válidos.");
+    }
+    return id;
+  });
 }
 
 function idFrom(raw: unknown, field: string): string | null {

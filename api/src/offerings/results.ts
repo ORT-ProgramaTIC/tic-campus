@@ -6,6 +6,7 @@ import { offeringScaleLevel, offeringTerm } from "../db/schema/gradebook.js";
 import { offeringArticle } from "../db/schema/offering-article.js";
 import { offeringHome } from "../db/schema/offering-home.js";
 import { officialGrade } from "../db/schema/official-grade.js";
+import { redoCovers } from "../db/schema/redo-covers.js";
 import { result } from "../db/schema/result.js";
 import { isUuid } from "../library/program.js";
 import { ApiError } from "../middleware/errors.js";
@@ -81,6 +82,10 @@ export interface Activity {
   dueAt: Date | null;
   resultsPublishedAt: Date | null;
   position: number;
+  /** The activities this one **replaces** (F23), by `offering_article.id`.
+   *  Empty for everything that is not a redo — which is what "is not a redo"
+   *  means, since there is no flag. */
+  covers: string[];
 }
 
 export interface Student {
@@ -164,9 +169,47 @@ export async function listActivities(
       ),
     )
     .orderBy(offeringArticle.position);
+  const covers = await readCovers(db, homeId);
   // `valueType` is nullable in the schema and not in an Activity: the `where`
   // above is what narrows it, and TypeScript cannot see that.
-  return rows as Activity[];
+  return rows.map((row) => ({
+    ...row,
+    covers: covers.get(row.id) ?? [],
+  })) as Activity[];
+}
+
+/**
+ * Which activities each redo covers (F23), for the whole home in one query.
+ *
+ * **Joined to the home through the redo's own use**, because the ids in
+ * `redo_covers` are `offering_article` ids and nothing else scopes them — the
+ * same join `readOfficialGrades` makes through `offering_term`.
+ *
+ * Returned as a map rather than nested by the query: two of the three callers
+ * already hold their rows and only want the list attached, and a `json_agg`
+ * would be one more thing that can disagree with `listActivities`.
+ */
+async function readCovers(
+  db: Db,
+  homeId: string,
+): Promise<Map<string, string[]>> {
+  const rows = await db
+    .select({ redoId: redoCovers.redoId, coveredId: redoCovers.coveredId })
+    .from(redoCovers)
+    .innerJoin(
+      offeringArticle,
+      and(
+        eq(offeringArticle.id, redoCovers.redoId),
+        eq(offeringArticle.offeringHomeId, homeId),
+      ),
+    );
+  const byRedo = new Map<string, string[]>();
+  for (const row of rows) {
+    const already = byRedo.get(row.redoId);
+    if (already === undefined) byRedo.set(row.redoId, [row.coveredId]);
+    else already.push(row.coveredId);
+  }
+  return byRedo;
 }
 
 /**
@@ -276,6 +319,11 @@ export interface MyResult {
    *  the student reads it. The number behind it is `value`. */
   scaleLevel: string | null;
   feedback: string | null;
+  /** What this result **replaces** (F23), by `activityId` — empty unless this
+   *  row is a redo's. Without it a student reads «TP2: 4» and «Recuperatorio:
+   *  8» as two unrelated marks and cannot tell which one their average used,
+   *  and the screen that would say so (F44) has nothing to join on. */
+  covers: string[];
 }
 
 /**
@@ -327,7 +375,15 @@ export async function myResults(
     )
     .where(eq(result.studentId, studentId))
     .orderBy(offeringArticle.position);
-  return rows.map(({ position: _position, ...row }) => row as MyResult);
+  // The ids alone, unfiltered: a covered activity whose marks are not published
+  // yet is an id this student can do nothing with, and the redo's own title
+  // already says what it is a redo *of*. F24's rule is about results, and there
+  // is no result here.
+  const covers = await readCovers(db, homeId);
+  return rows.map(
+    ({ position: _position, ...row }) =>
+      ({ ...row, covers: covers.get(row.activityId) ?? [] }) as MyResult,
+  );
 }
 
 /* ── Writing ─────────────────────────────────────────────────────────────── */

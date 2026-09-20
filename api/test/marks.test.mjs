@@ -33,6 +33,9 @@ function activity(id, termId, groupId, valueType, resultsPublishedAt) {
     dueAt: null,
     resultsPublishedAt,
     position: 0,
+    // F23: not a redo. Every activity carries the list, and empty is what
+    // "covers nothing" means — there is no flag.
+    covers: [],
   };
 }
 
@@ -56,6 +59,7 @@ const SETUP = {
     { id: "t2", name: "2do", formula: "avg(tps)" },
   ],
   finalFormula: 'avg("1er", "2do")',
+  redoPolicy: "max",
 };
 
 // Two TPs and two class activities in the first term, one TP in the second.
@@ -115,6 +119,7 @@ test("a term with no formula computes nothing, which is not sin nota", () => {
     groups: SETUP.groups,
     terms: [{ id: "t1", name: "1er", formula: null }],
     finalFormula: null,
+    redoPolicy: "max",
   };
   const marks = computeMarks(noFormula, ACTIVITIES, RESULTS, [1]).get(1);
   assert.deepEqual(marks.terms, {});
