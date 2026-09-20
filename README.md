@@ -138,6 +138,41 @@ token for an unknown `code`, and hardcodes `acr: "strong"`. Everything it cannot
 `acr=campus`, `alg: none`, HS256 confusion, a wrong audience, the `Host` header, the
 single-flight — is in `api/test/auth-*.test.mjs`, signed against a locally generated key.
 
+#### Una sesión de verdad, para probar las rutas a mano
+
+`make test-db` proves the queries; it never builds a session. To exercise the routes as a
+signed-in person — the `roles[]` gate on `/mine`, `can` through `optionalSession`, the CSRF
+check and `requireAdmin`'s 403 — the whole stack has to run on the host, because the mock is
+on loopback. Three things bite, and all three are about the mock being a **fixture rather
+than a configuration**:
+
+- **`PEOPLE` has no `admin` persona and its `sub` values are fixture numbers.** `sub` _is_
+  `public."user".id`, behind a real foreign key (`campus.session.user_id`), and roles come
+  only from the token — campus stores none. So a database row cannot make anybody an admin,
+  and the three shipped personas cannot reach `/api/admin/offerings` at all. `PEOPLE` is a
+  module global read inside `_issue`, so a wrapper that imports `mock_oidc`, replaces it with
+  personas whose `sub` matches the seeded ids, and calls `build_app` costs a dozen lines and
+  edits nothing in tic-host. Give `admin` and `admin-hosting` the _same_ `sub`: then the 403
+  the second one gets is attributable to the role and to nothing else.
+- **The audience.** The mock defaults to `tic-directory` and campus asserts `tic-campus`
+  (`TIC_AUTH_AUDIENCE`). `build_app(issuer, "tic-campus")`, or the flag.
+- **The cookie is `tic_campus_session_dev`**, not the `__Host-` one, whenever `NODE_ENV` is
+  not `production` — a curl sending the production name looks like a broken session.
+
+The login is four steps, not one redirect, because `/authorize` serves a consent **form**:
+`GET /api/auth/login` (keep the cookie jar, read `state` and `redirect_uri` off the
+`Location`) → `POST /approve` with `who` → `GET` the callback it returns, with the jar →
+`GET /api/me`, whose `csrf_token` is what every non-GET needs in `X-CSRF-Token`. CSRF is not
+a cookie: it lives in the session row, so it can only come from `/api/me`.
+
+Note the refusal order on an admin write — `guard` runs before `requireAdmin`, and the CSRF
+check is _inside_ `guard`. A signed-in non-admin with no CSRF token gets `csrf_failed`, so
+reaching the `forbidden` 403 at all requires sending a **valid** one.
+
+The database is `make test-db`'s recipe with the container left running: the roles are
+cluster-wide, so throw it away afterwards or the next run fails on
+`role "campus" already exists`.
+
 ## Las materias
 
 Campus owns no roster (F5). Who teaches what, who is enrolled in what and which courses an
