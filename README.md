@@ -92,10 +92,21 @@ docker compose exec -T app python -m scripts.manage_clients check-redirect \
   --client-id tic-campus --uri 'https://tic-campus.ort.edu.ar/api/auth/callback'
 umask 077
 docker compose exec -T app python -m scripts.manage_clients issue-secret \
-  --client-id tic-campus --name 'campus api' --days 365 --quiet 2>/dev/null \
+  --client-id tic-campus --name 'campus api' --days 365 --quiet \
   > /opt/tic-campus/secrets/tic_auth_client_secret
 chmod 600 /opt/tic-campus/secrets/tic_auth_client_secret
+test -s /opt/tic-campus/secrets/tic_auth_client_secret \
+  && head -c 13 /opt/tic-campus/secrets/tic_auth_client_secret; echo
 ```
+
+**`cd /opt/tic-auth` is load-bearing and `2>/dev/null` is not.** `app` is tic-auth's
+service; from `/opt/tic-campus` the same command answers `service "app" is not running`.
+tic-auth's own docs write that redirect with `2>/dev/null`, and it is worth leaving off:
+with `--quiet` only the credential goes to stdout and `prefijo …, vence …` already goes to
+stderr (`scripts/manage_clients.py:765`), so suppressing stderr hides nothing but the
+errors — and a failed `issue-secret` then writes its empty stdout over the secret. That is
+why the last line checks the file is not empty, and why `make deploy` checks the same
+thing with `test -s` before it rolls.
 
 Every flag is load-bearing. `--confidential` because a public client with the code grant is
 a browser doing its own exchange, which is the design `CLIENTS.md` retires.
