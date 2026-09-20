@@ -43,9 +43,9 @@ the host by `make migrate` and never enters a container.
 of the secrets: it sets no `USER`, so root is the uid that opens them. Adding one means
 chowning both in the same commit (`../DEPLOY-CONVENTIONS.md` §4).
 
-Campus owns five tables so far — the article library, the program units and the two the
-login needs (`api/src/db/schema/`, `docs/FEATURES.md` F37). Schema changes are Drizzle
-migrations:
+Campus owns six tables so far — the article library, the program units, the two the login
+needs and `offering_home` (`api/src/db/schema/`, `docs/FEATURES.md` F37). Schema changes
+are Drizzle migrations:
 
 ```sh
 make migrate        # `make deploy` already does this, after the roll
@@ -137,6 +137,71 @@ It proves the round trip and **not** the refusals: it never reads `code_challeng
 token for an unknown `code`, and hardcodes `acr: "strong"`. Everything it cannot test —
 `acr=campus`, `alg: none`, HS256 confusion, a wrong audience, the `Host` header, the
 single-flight — is in `api/test/auth-*.test.mjs`, signed against a locally generated key.
+
+## Las materias
+
+Campus owns no roster (F5). Who teaches what, who is enrolled in what and which courses an
+offering serves are all read live from tic-auth's `directory.*` views, and the only thing
+campus stores about an offering is that an admin said it is ours — `campus.offering_home`,
+one row, which **is** the activation (F34). An offering the directory knows about and
+nobody activated has no campus presence at all: not an empty home, not a 200 with nothing
+in it.
+
+```
+GET    /api/offerings?year=2027                    público   el listado para elegir (F6)
+GET    /api/offerings/mine?year=2027               sesión    "Mis materias" (F6)
+GET    /api/offerings/:year/:materia/:oferta       público   resolver una URL pública (F32)
+GET    /api/admin/offerings?year=2027              ADMIN     el directorio, con qué está activado
+POST   /api/admin/offerings/:id/activation         ADMIN     activar (idempotente)
+DELETE /api/admin/offerings/:id/activation         ADMIN     desactivar
+```
+
+**`year` is optional and absent means the _current_ school year**, which `directory.*`
+states as `is_current` — never `new Date().getFullYear()`. Which year is current is
+tic-auth's fact; a campus that computed its own would disagree with the directory in the
+weeks either side of a year change and the symptom would be an empty site.
+
+**The URL is derived and never stored** (F32): `/<año>/<materia>/<oferta>`, where the
+offering's segment is its own name if it has one and its courses' names if it does not. A
+directory rename therefore changes the URL, which is the point — there is no stored copy to
+keep in step. Two offerings that would produce the same URL both resolve to **404** rather
+than one of them winning.
+
+### Three relations that look like one question
+
+This is the trap, and it has already cost tic-auth a migration to discover:
+
+| the question                    | the relation                                         |
+| ------------------------------- | ---------------------------------------------------- |
+| is this person a student at all | the token's `roles[]`                                |
+| what course are they in         | `directory.student_course` — campus does not read it |
+| what are they taking            | `directory.enrollment`                               |
+
+On the 2026-09-02 snapshot, courses `NR5A`–`NR5E` had no `offering_course` rows, so
+`directory.enrollment` omitted **129 of 356** current students. A student in that state sees
+an empty "Mis materias", and **that is a directory row to add, not a campus bug** — the fix
+is in BurocraTIC, and a `UNION` against `student_course` here would only hide it.
+
+For the same reason, which half of "Mis materias" runs is decided by `roles[]` and not by
+what the tables return: staff carry enrolments, and the real snapshot has an `admin` holding
+one.
+
+### The database tests
+
+`pnpm test` needs no database. The joins and the grants do, and they are in
+`api/test/db.test.mjs`, skipped unless `TEST_DATABASE_URL` is set:
+
+```sh
+make test-db                                    # throwaway Postgres, removed either way
+pnpm --filter tic-campus-api db:stubs:check     # ¿siguen al día los stand-ins?
+```
+
+It applies `api/test/support/directory/standins.generated.sql` — a **generated** slice of
+tic-auth's schema, committed, so neither Python nor a tic-auth checkout is needed to run the
+tests — then creates campus's four roles and runs the real migrator as `campus_owner` and
+the queries as `campus_svc`. That is what makes a missing `GRANT` a failing test instead of
+a deploy that dies in a container log. Regenerating it (`db:stubs:generate`) needs both, and
+`db:stubs:check` skips rather than fails when tic-auth is not on disk.
 
 ## Doctor
 

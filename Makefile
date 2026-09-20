@@ -30,7 +30,14 @@ MOUNTED_SECRETS ?= secrets/db_svc_password secrets/tic_auth_client_secret
 DB_OWNER_PASSWORD_FILE ?= secrets/db_owner_password
 MIGRATION_DB_URL ?= postgresql://campus_owner@tic-db:5432/tic_auth
 
-.PHONY: help deploy rollout config migrate smoke doctor
+# `make test-db`'s throwaway Postgres. It is a DEVELOPMENT target and is not
+# part of `deploy`: it pulls an image and needs a Docker daemon, neither of
+# which belongs in a production roll.
+TEST_DB_CONTAINER ?= tic-campus-test-db
+TEST_DB_IMAGE ?= postgres:17
+TEST_DB_PORT ?= 55433
+
+.PHONY: help deploy rollout config migrate test-db smoke doctor
 help:  ## list targets
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*##/\t/' | expand -t22
 
@@ -101,6 +108,27 @@ migrate:  ## aplicar las migraciones como campus_owner — `deploy` ya lo hace
 	  -e PGPASSWORD="$$(cat $(DB_OWNER_PASSWORD_FILE))" \
 	  api node dist/db/migrate.js
 
+test-db:  ## las pruebas que necesitan un Postgres de verdad — en una base descartable
+	@# A container of its own, removed either way, because the assertions are
+	@# about GRANTS: they create four roles and a schema, and a database that
+	@# survived one run would fail the next on `role "campus" already exists`.
+	@#
+	@# The test suite reads `api/test/support/directory/standins.generated.sql`,
+	@# the committed slice of tic-auth's schema — so this needs neither Python
+	@# nor a tic-auth checkout. `pnpm --filter tic-campus-api db:stubs:check` is
+	@# what proves that file still matches upstream, and it needs both.
+	@docker rm -f $(TEST_DB_CONTAINER) >/dev/null 2>&1 || true
+	@docker run -d --rm --name $(TEST_DB_CONTAINER) \
+	  -e POSTGRES_PASSWORD=harness-only-not-a-secret \
+	  -e POSTGRES_DB=tic_auth \
+	  -p 127.0.0.1:$(TEST_DB_PORT):5432 $(TEST_DB_IMAGE) >/dev/null
+	@trap 'docker rm -f $(TEST_DB_CONTAINER) >/dev/null 2>&1 || true' EXIT; \
+	  for i in $$(seq 30); do \
+	    docker exec $(TEST_DB_CONTAINER) pg_isready -q -U postgres && break; sleep 1; \
+	  done; \
+	  TEST_DATABASE_URL="postgresql://postgres:harness-only-not-a-secret@127.0.0.1:$(TEST_DB_PORT)/tic_auth" \
+	    pnpm --filter tic-campus-api test
+
 smoke:  ## through tic-proxy with the real Host header, not around it
 	@curl -fsS -H 'Host: $(HOST)' $(SMOKE_BASE)/api/health | grep -q '"ok"' \
 	  && echo "ok: /api/health through tic-proxy" \
@@ -121,6 +149,13 @@ smoke:  ## through tic-proxy with the real Host header, not around it
 	@test "$$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: $(HOST)' $(SMOKE_BASE)/api/me)" = 401 \
 	  && echo "ok: /api/me contesta 401 sin sesión" \
 	  || { echo "FAIL: /api/me no contestó 401 — si contesta 404 falta secrets/tic_auth_client_secret"; exit 1; }
+	@# The first check that campus can READ the directory through a route rather
+	@# than through /api/readyz's own query: this one goes through the ORM, the
+	@# joins and `campus_app`'s SELECT on four views at once. An empty array is a
+	@# pass — a stack with nothing activated yet (F34) is a working stack.
+	@curl -fsS -H 'Host: $(HOST)' $(SMOKE_BASE)/api/offerings | grep -q '^\[' \
+	  && echo "ok: /api/offerings lee el directorio como campus_svc" \
+	  || { echo "FAIL: /api/offerings no devolvió una lista — \`docker logs tic-campus-api\`"; exit 1; }
 	@# **A `kid`, never a 200.** The JWKS goes through tic-proxy with a Host
 	@# header, and that header fails soft: omit it and nginx's default server
 	@# answers 200 with a body that is not a key set. Asked with the api's own

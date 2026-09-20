@@ -144,7 +144,7 @@ re-argued per item):
 
 ### F5 · Roles and permissions, derived from the directory
 
-- [x] **Status:** decided
+- [x] **Status:** built (slice 4)
 - **Decision:** No campus-side ACL tables. Everything is read from `directory.*`:
   - **Teacher of a subject** (a `teacher_offering` row on any offering of that subject):
     edits that subject's article library (F8).
@@ -157,12 +157,58 @@ re-argued per item):
   A separate editor list would be a second roster to keep in sync with the one tic-directory
   already maintains.
 
+  **Built 2026-09-20.** `api/src/offerings/access.ts` is `capabilitiesFor(db, actor,
+offeringId, subjectId)` → `{ editLibrary, manageOffering, seeOwnMarks }`, up to three
+  `limit(1)` probes with ADMIN short-circuiting before any of them. Three things were
+  settled by building it:
+
+  - **No rank ladder and no `requireRole`.** MEV has `STUDENT < TEACHER < ADMIN` because
+    its gates are role-shaped; campus's are resource-shaped, and the only role-shaped gate
+    in the whole api is F34's activation, which is written out where it is used. `acr ==
+strong` stays in `verify.ts`, so there is no second credential gate either.
+  - **`admin` is a role key and never a prefix.** `admin-hosting` is tic-hosting's
+    operators and grants nothing in the directory (tic-auth `0008`); a `startsWith` would
+    hand every VM operator the gradebook.
+  - **`seeOwnMarks` asks `directory.enrollment`, not `roles[]`** — the opposite of what F6's
+    listing does with the same table, because they are opposite questions. Listing is _what
+    belongs on your home page_; authorising is _does a row name this person_, and if one
+    does, the results it guards are theirs. Teacher-of-subject has no relation of its own:
+    it is `teacher_offering` joined through `offering.subject_id`, on any offering of that
+    subject in any year.
+
+  There is no `requireOfferingAccess` middleware yet. MEV's three-valued check exists
+  because its paths carry a parent id it must gate on; campus's first route that refuses a
+  _person_ for a _resource_ is the gradebook, and it can arrive with one.
+
 ### F6 · "Mis materias"
 
-- [x] **Status:** decided
+- [x] **Status:** built (slice 4)
 - **Decision:** After login, `/` lists the user's offerings. Students get the offerings they
   are enrolled in, each with pending activities and progress. Teachers get the offerings they
   teach, with a count of open revision requests. Anonymous visitors get a year/subject picker.
+
+  **Built 2026-09-20**, minus the counts — pending activities, progress and open revision
+  requests are F18's and F29's, and each arrives with the feature that produces the number.
+  `GET /api/offerings/mine` is one list with a `roles` array per entry rather than two
+  lists, so the teacher who is also enrolled in something is one card and not a merge the
+  client has to do.
+
+  **Which half runs is decided by `roles[]`, not by what the tables return.** Staff carry
+  enrolments — the 2026-09-02 snapshot has an `admin` holding one — so a teacher would
+  otherwise see a subject of theirs listed as something they study. Reading
+  `directory.user_role` for that fact would be a second source of something the token
+  already states.
+
+  **`year` defaults to `is_current` and never to a clock.** Which year is current is
+  tic-auth's fact, flattened onto the views; a campus that computed its own would disagree
+  with the directory every January.
+
+  The trap the slice is really about: _is this person a student_ (`roles[]`), _what course
+  are they in_ (`directory.student_course`, which campus does not read) and _what are they
+  taking_ (`directory.enrollment`) are three questions with three relations. tic-auth's
+  `0006` measured the cost of confusing them — 129 of 356 current students missing, because
+  their courses had no `offering_course` rows. Campus shows those students an empty list,
+  which is a directory row to add and not something to paper over here.
 
 ---
 
@@ -468,7 +514,7 @@ re-argued per item):
 
 ### F34 · An admin activates offerings
 
-- [x] **Status:** decided
+- [x] **Status:** built (slice 4)
 - **Decision:** A directory offering has **no campus presence until an admin activates it**.
   Offerings the directory knows about but campus doesn't teach (never used, or not a TIC
   subject) stay invisible instead of showing up as empty homes. Activation creates the home
@@ -476,6 +522,14 @@ re-argued per item):
   of the offering fill it in.
   **Always blank:** no copying from last year's offering. The library (F8, F15) is what
   carries across years, and a copy would be a second, weaker way of doing the same thing.
+
+  **Built 2026-09-20.** `campus.offering_home` exists, and **the row's existence is the
+  activation** — it carries no default sections yet, because F14's sections and links have
+  no reader. Both operations are idempotent: an admin who clicks twice, or who activates
+  what a colleague already did, has not made a mistake, and a 409 would be a state the
+  client has to interpret before it can tell the person their action worked. Deactivation
+  is a `DELETE` while there is nothing under a home to orphan; when F14 hangs sections on
+  it, that becomes `archived_at` (F36).
 
 ### F35 · Past years: public and read-only
 
@@ -523,7 +577,7 @@ worked example).
   | `article`          | library article: subject, slug, title, `published_version_id`, `draft_version_id`, `archived_at` (F7, F8, F11)                          | → `public.subject`                                                               |
   | `article_version`  | one saved body: Markdown source, author, created_at (F11)                                                                               | → `article`, `public."user"`                                                     |
   | `program_unit`     | the subject's program: title, Markdown contents, position (F15)                                                                         | → `public.subject`                                                               |
-  | `offering_home`    | activation, section list and order, links list, slug fallback (F14, F34)                                                                | → `public.offering`                                                              |
+  | `offering_home`    | **built (slice 4)** — activation only so far; the section list, the links and the slug fallback arrive with F14 and F32 (F14, F34)      | → `public.offering`                                                              |
   | `offering_unit`    | the offering's copy of the program units: title, position, `hidden` (F13, F15)                                                          | → `offering_home`, `program_unit` (nullable)                                     |
   | `offering_article` | an offering's **use** of an article: unit, position, publish date, visibility (F4), and the grading fields when it is an activity (F18) | → `offering_home`, `article`, `offering_unit`, `offering_group`, `offering_term` |
   | `redo_covers`      | which uses a redo covers (F23)                                                                                                          | → `offering_article` ×2                                                          |

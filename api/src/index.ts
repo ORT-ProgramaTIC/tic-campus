@@ -1,5 +1,5 @@
 import { count } from "drizzle-orm";
-import express from "express";
+import express, { type RequestHandler } from "express";
 import { createRemoteKeySource } from "./auth/jwks.js";
 import { createRenewer } from "./auth/refresh.js";
 import { createSessionStore } from "./auth/session-store.js";
@@ -10,8 +10,11 @@ import { createDb, createPool } from "./db/client.js";
 import { bundledMigrationCount } from "./db/migrate.js";
 import { campus } from "./db/schema/_schema.js";
 import { directorySubject } from "./db/schema/directory.js";
-import { requireSession } from "./middleware/session.js";
+import { errorHandler, notFound } from "./middleware/errors.js";
+import { optionalSession, requireSession } from "./middleware/session.js";
+import { createAdminOfferingRoutes } from "./routes/admin-offerings.js";
 import { createAuthRoutes, createMeRoute } from "./routes/auth.js";
+import { createOfferingRoutes } from "./routes/offerings.js";
 
 const config = loadConfig();
 const pool = createPool(config);
@@ -115,6 +118,21 @@ app.get("/api/readyz", (_req, res, next) => {
  * and invites a client to keep trying it (`CLIENTS.md` §8). In production there
  * is no such state: `loadConfig` refuses to return without the secret.
  */
+/**
+ * With no login configured there are no sessions to read, so the two guards
+ * below stand in for the real ones: a route that needs a session answers the
+ * same 401 it would with one, and a route that merely *offers* one carries on
+ * with nobody signed in. The alternative — mounting the public offering routes
+ * only when a client secret exists — would make campus's content disappear
+ * because its login is misconfigured, which is exactly backwards (F4).
+ */
+let guard: RequestHandler = (_req, res) => {
+  res
+    .status(401)
+    .json({ error: { code: "no_session", message: "No iniciaste sesión." } });
+};
+let maybeSession: RequestHandler = (_req, _res, next) => next();
+
 if (config.auth) {
   const store = createSessionStore(db);
   const verify = createVerifier({
@@ -134,7 +152,8 @@ if (config.auth) {
   });
   // One guard, built once and shared: it carries the freshness rule and the CSRF
   // check, and two of them would be two chances to mount a route with only one.
-  const guard = requireSession({ config, store, renewer });
+  guard = requireSession({ config, store, renewer });
+  maybeSession = optionalSession({ config, store, renewer });
 
   app.use(
     "/api/auth",
@@ -142,6 +161,18 @@ if (config.auth) {
   );
   app.get("/api/me", guard, createMeRoute(config.auth));
 }
+
+// Public (F4), so mounted whatever the login's state. The two guards go in
+// together because one route inside needs a session and one merely offers it —
+// applying `maybeSession` to the whole router instead would read and renew the
+// session twice for `/mine`.
+app.use("/api/offerings", createOfferingRoutes(db, { guard, maybeSession }));
+app.use("/api/admin/offerings", createAdminOfferingRoutes(db, guard));
+
+// Last, and in this order: anything that reached here matched no route, and
+// anything thrown by one of them lands in the handler.
+app.use(notFound);
+app.use(errorHandler);
 
 const server = app.listen(config.port, () =>
   console.log(`tic-campus-api on :${config.port}`),

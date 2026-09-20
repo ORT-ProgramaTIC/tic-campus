@@ -7,6 +7,8 @@
     "typecheck": "tsc --noEmit",
     "start": "node dist/index.js",
     "test": "pnpm build && node --test test/*.test.mjs",
+    "db:stubs:generate": "node scripts/gen-directory-standins.mjs",
+    "db:stubs:check": "node scripts/gen-directory-standins.mjs --check",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {

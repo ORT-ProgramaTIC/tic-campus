@@ -62,34 +62,25 @@ export interface SessionDeps {
  * because every authenticated route needs both, in that order, and a separate
  * one could be mounted without the other.
  */
-export function requireSession({
-  config,
-  store,
-  renewer,
-}: SessionDeps): RequestHandler {
-  const cookie = cookieSpec(config, "session");
+export function requireSession(deps: SessionDeps): RequestHandler {
+  const resolve = sessionResolver(deps);
   return (req: Request, res: Response, next: NextFunction): void => {
     void (async () => {
-      const secret = readCookie(req.header("cookie"), cookie.name);
-      if (!secret) {
-        unauthorized(res, "No iniciaste sesión.");
-        return;
-      }
       try {
-        const id = idFor(secret);
-        const stored = await store.read(id);
-        if (!stored) {
+        const resolved = await resolve(req);
+        // The two are the same refusal and not the same sentence: somebody who
+        // never signed in is being told what to do, and somebody whose session
+        // died is being told why the page stopped working.
+        if (resolved === "anonymous") {
+          unauthorized(res, "No iniciaste sesión.");
+          return;
+        }
+        if (resolved === "stale") {
           unauthorized(res, "Tu sesión expiró. Iniciá sesión de nuevo.");
           return;
         }
-        // The freshness rule runs while answering, so the claims a route acts on
-        // are the ones tic-auth will still stand behind.
-        const record = await renewer.ensureFresh(id, stored);
-        if (!record) {
-          unauthorized(res, "Tu sesión expiró. Iniciá sesión de nuevo.");
-          return;
-        }
-        req.session = { id, record };
+        req.session = resolved;
+        const { record } = resolved;
 
         const presented = req.header("x-csrf-token") ?? "";
         if (!SAFE_METHODS.has(req.method) && presented !== record.csrf) {
@@ -106,6 +97,53 @@ export function requireSession({
         next(cause);
       }
     })();
+  };
+}
+
+/**
+ * The same read, for a route that serves anonymous visitors too (F4).
+ *
+ * It never refuses: no cookie, a cookie naming a session that is gone, a
+ * renewal tic-auth would not grant — all three are simply *not signed in*, and
+ * a public offering page still answers 200. There is no CSRF check because
+ * there is nothing to protect: this is only ever mounted on reads.
+ */
+export function optionalSession(deps: SessionDeps): RequestHandler {
+  const resolve = sessionResolver(deps);
+  return (req: Request, _res: Response, next: NextFunction): void => {
+    void (async () => {
+      try {
+        const resolved = await resolve(req);
+        if (typeof resolved !== "string") req.session = resolved;
+        next();
+      } catch (cause) {
+        next(cause);
+      }
+    })();
+  };
+}
+
+/**
+ * The cookie, the row, and the freshness rule — the part both guards share.
+ * The rule runs while answering, so the claims a route acts on are the ones
+ * tic-auth will still stand behind.
+ *
+ * `'anonymous'` is *no cookie was presented* and `'stale'` is *one was, and it
+ * names nothing we still hold*. The public reads treat them identically; the
+ * guard does not, because they are different sentences to a person.
+ */
+function sessionResolver({ config, store, renewer }: SessionDeps) {
+  const cookie = cookieSpec(config, "session");
+  return async (
+    req: Request,
+  ): Promise<RequestSession | "anonymous" | "stale"> => {
+    const secret = readCookie(req.header("cookie"), cookie.name);
+    if (!secret) return "anonymous";
+    const id = idFor(secret);
+    const stored = await store.read(id);
+    if (!stored) return "stale";
+    const record = await renewer.ensureFresh(id, stored);
+    return record ? { id, record } : "stale";
   };
 }
 
