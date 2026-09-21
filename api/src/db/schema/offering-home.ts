@@ -28,8 +28,8 @@ import { directoryOfferingTable, directoryUserTable } from "./directory.js";
  * `finalFormula` arrived with slice 8.
  *
  * **Deactivation is `archivedAt`, not a `DELETE`** (F36), since slice 5 —
- * `offering_article` now hangs off this id, and F37 hangs `result` off that and
- * `revision_request` off `result`. A `DELETE` behind an idempotent admin button
+ * `offering_article` now hangs off this id, and both `result` and
+ * `revision_request` hang off that. A `DELETE` behind an idempotent admin button
  * would take a teacher's work with it, and a cascade would eventually take
  * students' marks. Archiving is also why the primary key is a uuid of its own
  * even though `offeringId` is already unique, and what the F35 year lock will

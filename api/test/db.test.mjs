@@ -45,6 +45,12 @@ import {
   saveResults,
 } from "../dist/offerings/results.js";
 import {
+  answerRequest,
+  fileRequests,
+  listRequests,
+  myRevisions,
+} from "../dist/offerings/revisions.js";
+import {
   computeBothViews,
   computeMarks,
   publishedOnly,
@@ -1819,6 +1825,166 @@ test(
           redoPolicy: "max",
         });
         assert.equal((await marks()).all.value, 9, "todo como estaba");
+      },
+    );
+
+    // --- slice 11: a mark is disputed, and somebody answers (F29) -----------
+    //
+    // Still ordered before the deactivation below. By here `tp-sql` is a
+    // published numeric activity worth 9 for `ids.student`, `ids.teacher` is
+    // un-enrolled from NR5A but still carries an 8 on it, and slice 10 has put
+    // its redo away again. This block cleans up after itself too, so the archive
+    // subtest still sees what it expects.
+
+    await t.test(
+      "a student disputes a mark, and a teacher answers",
+      async () => {
+        // **Insert, update and delete as `campus_svc`**, the rule every new table
+        // gets: a subtest that only read would prove nothing about the grant, and
+        // the symptom of a missing one is `permission denied` here and a green
+        // typecheck everywhere else.
+        const home = await activeHome(db, ids.current);
+        const tp = (await listActivities(db, home.homeId)).find(
+          (a) => a.slug === "tp-sql",
+        );
+
+        const file = (extra) =>
+          fileRequests(
+            db,
+            ids.current,
+            home.homeId,
+            {
+              activityId: tp.id,
+              studentIds: [ids.student],
+              reason: "Entregué la segunda parte.",
+              bonusTasks: null,
+              ...extra,
+            },
+            ids.student,
+          );
+
+        // The refusals first, while nothing is written. Each is a trust boundary:
+        // this is the first row a *student* writes, so every id in the body is
+        // somebody's keyboard.
+        await assert.rejects(
+          () => file({ activityId: "99999999-9999-4999-8999-999999999999" }),
+          /no es de esta materia/,
+          "another offering's activity is not disputable",
+        );
+        await assert.rejects(
+          () => file({ studentIds: [ids.orphanStudent, ids.student] }),
+          /no cursa esta materia/,
+          "you may not file for somebody who is not in the class",
+        );
+        await assert.rejects(
+          () => file({ studentIds: [ids.teacher] }),
+          /sea tuya/,
+          "and not for somebody else alone, even a classmate",
+        );
+
+        // INSERT. One row per student named, and the filer is on it.
+        await file({});
+        const [open] = await listRequests(db, home.homeId);
+        assert.equal(open.studentId, ids.student);
+        assert.equal(open.requestedBy, ids.student);
+        assert.equal(open.slug, "tp-sql");
+        assert.equal(
+          open.answeredAt,
+          null,
+          "sin responder es answered_at null",
+        );
+        assert.deepEqual(
+          (await myRevisions(db, home.homeId, ids.student)).map((r) => r.id),
+          [open.id],
+        );
+
+        // The **partial** unique index, which is the whole of "one open request
+        // per result" and the only thing in this schema that is partial.
+        await assert.rejects(
+          () => file({}),
+          /sin responder/,
+          "one open at a time",
+        );
+
+        // UPDATE.
+        await answerRequest(
+          db,
+          home.homeId,
+          open.id,
+          "Mirado de nuevo: la segunda parte no estaba. Queda.",
+          ids.admin,
+        );
+        const [answered] = await listRequests(db, home.homeId);
+        assert.notEqual(answered.answeredAt, null);
+        assert.equal(answered.answeredBy, ids.admin);
+        assert.match(answered.answer, /Queda/);
+
+        // Answered unblocks the next one — that is what makes the index partial
+        // rather than total.
+        await file({ reason: "Encontré el commit." });
+        assert.equal((await listRequests(db, home.homeId)).length, 2);
+
+        // Another offering's teacher cannot answer by id: the home is in the
+        // UPDATE's `where`, not in a read before it.
+        const elsewhere = await activeHome(db, ids.pastYear);
+        await assert.rejects(
+          () =>
+            answerRequest(
+              db,
+              elsewhere.homeId,
+              open.id,
+              "mío ahora",
+              ids.teacher,
+            ),
+          /No encontramos/,
+        );
+
+        // A mark this request argues with can still be emptied: nothing points at
+        // the `result` row, which is why the key is `(activity, student)`.
+        await saveResults(
+          db,
+          home.homeId,
+          [
+            {
+              studentId: ids.student,
+              activityId: tp.id,
+              clear: true,
+              feedback: null,
+            },
+          ],
+          ids.admin,
+        );
+        assert.equal(
+          (await listRequests(db, home.homeId)).length,
+          2,
+          "borrar la nota no se lleva la conversación",
+        );
+
+        // DELETE, and the cleanup this block owes the subtests after it — the
+        // mark included, which slice 10 left at 9.
+        await svc.query("delete from campus.revision_request");
+        assert.deepEqual(await listRequests(db, home.homeId), []);
+        await saveResults(
+          db,
+          home.homeId,
+          [
+            {
+              studentId: ids.student,
+              activityId: tp.id,
+              clear: false,
+              value: 9,
+              feedback: null,
+            },
+          ],
+          ids.admin,
+        );
+        assert.equal(
+          (await myResults(db, home.homeId, ids.student)).find(
+            (r) => r.activityId === tp.id,
+          ).value,
+          9,
+          "todo como estaba",
+        );
       },
     );
 

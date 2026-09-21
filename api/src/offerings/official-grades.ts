@@ -224,7 +224,7 @@ export async function saveOfficialGrades(
 
 /* ── What is accepted ────────────────────────────────────────────────────── */
 
-const MAX_TEXT = 2000;
+export const MAX_TEXT = 2000;
 
 /**
  * Bodies are client-supplied; this is the whole of what is accepted.
@@ -285,7 +285,11 @@ export function checkGrades(raw: unknown): GradeInput[] {
   });
 }
 
-function checkText(raw: unknown, what: string): string | null {
+/** The house text field: absent or `null` becomes `null`, anything else is a
+ *  string of at most `MAX_TEXT`. Exported because F29's `reason` and
+ *  `bonusTasks` are the same field, and `checkFeedback` in `results.ts` is
+ *  already a second copy of it. */
+export function checkText(raw: unknown, what: string): string | null {
   if (raw === undefined || raw === null) return null;
   if (typeof raw !== "string" || raw.length > MAX_TEXT) {
     throw new ApiError(

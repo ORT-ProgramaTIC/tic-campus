@@ -407,20 +407,22 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
  * the names and the formulas travel in one body: fix both, save once.
  */
 async function revalidateFormulas(tx: Tx, homeId: string): Promise<void> {
-  const [groups, terms, home] = await Promise.all([
-    tx
-      .select({ name: offeringGroup.name })
-      .from(offeringGroup)
-      .where(eq(offeringGroup.offeringHomeId, homeId)),
-    tx
-      .select({ name: offeringTerm.name, formula: offeringTerm.formula })
-      .from(offeringTerm)
-      .where(eq(offeringTerm.offeringHomeId, homeId)),
-    tx
-      .select({ finalFormula: offeringHome.finalFormula })
-      .from(offeringHome)
-      .where(eq(offeringHome.id, homeId)),
-  ]);
+  // Sequential, **not** `Promise.all`: `tx` is a single connection, and pg 8
+  // warns on every concurrent query through one client — pg 9 removes the
+  // behaviour outright. Three round trips inside a transaction that is already
+  // doing a dozen writes is not the thing to optimise.
+  const groups = await tx
+    .select({ name: offeringGroup.name })
+    .from(offeringGroup)
+    .where(eq(offeringGroup.offeringHomeId, homeId));
+  const terms = await tx
+    .select({ name: offeringTerm.name, formula: offeringTerm.formula })
+    .from(offeringTerm)
+    .where(eq(offeringTerm.offeringHomeId, homeId));
+  const home = await tx
+    .select({ finalFormula: offeringHome.finalFormula })
+    .from(offeringHome)
+    .where(eq(offeringHome.id, homeId));
 
   const groupNames = new Set(groups.map((group) => group.name));
   for (const term of terms) {

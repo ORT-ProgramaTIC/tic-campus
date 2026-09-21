@@ -18,8 +18,17 @@ import {
   gradebook,
   listActivities,
   myResults,
+  roster,
   saveResults,
 } from "../offerings/results.js";
+import {
+  answerRequest,
+  checkAnswer,
+  checkRequest,
+  fileRequests,
+  listRequests,
+  myRevisions,
+} from "../offerings/revisions.js";
 import {
   checkGrades,
   myOfficialGrades,
@@ -54,6 +63,14 @@ import {
  * (F22), which have no publish date of their own — a third key on that payload
  * rather than a fourth route, because the boletín reads both numbers or
  * neither.
+ *
+ * **The student can also write here, and this is the only place they can.**
+ * `POST /:offeringId/revisions` is F29: asking for a mark to be looked at
+ * again. It is the first non-`GET` any student reaches in campus, so it is the
+ * first exercise of the student side of `guard`'s CSRF check and the first time
+ * `seeOwnMarks` gates a write rather than a read. It lives on this router and
+ * not one of its own for the reason above — a third router under the same
+ * prefix is a third walk through the mount's `guard`.
  */
 
 function offeringIdFrom(raw: string): number {
@@ -277,14 +294,35 @@ export function createGradebookRoutes(db: Db): Router {
         // it — and the list is filtered to what this student may see, or an
         // unpublished activity would drag their own mark down and tell them it
         // is there.
-        const [results, setup, activities, official] = await Promise.all([
-          myResults(db, home.homeId, record.userId),
-          readSetup(db, home.homeId),
-          listActivities(db, home.homeId),
-          // A third key here and not a fourth route (F22): the boletín is one
-          // screen, and the two numbers are read together or not at all.
-          myOfficialGrades(db, home.homeId, record.userId),
-        ]);
+        const [results, setup, activities, official, revisions, classmates] =
+          await Promise.all([
+            myResults(db, home.homeId, record.userId),
+            readSetup(db, home.homeId),
+            listActivities(db, home.homeId),
+            // A third key here and not a fourth route (F22): the boletín is one
+            // screen, and the two numbers are read together or not at all.
+            myOfficialGrades(db, home.homeId, record.userId),
+            // F29, and the same argument a third time. A flat list rather than a
+            // key on each mark: a request outlives the row it argues with, so
+            // hanging it off `results` would drop exactly the ones still owed an
+            // answer.
+            myRevisions(db, home.homeId, record.userId),
+            // Who else is in the class, which F29's group filing needs and
+            // nothing else in campus has ever told a student. **This is a real
+            // widening**: every enrolled student now learns the full class list
+            // with ids. It is what the old campus shipped — the dialog let you
+            // name the partners you worked with — and it is written down here
+            // rather than arriving by accident. Names only; no marks of anybody
+            // else's ride along.
+            // ponytail: `roster` is three queries and the filter below throws
+            // two of them away — they find the departed students it flags for
+            // the grid, which a classmate picker does not want. Reused anyway
+            // rather than opening a fourth reader of `directory.enrollment`
+            // (F38 keeps that answer in one place). If this read gets hot, the
+            // move is to export the enrolled half of `roster`, not to inline a
+            // copy of it here.
+            roster(db, offeringId, home.homeId),
+          ]);
         const computed = computeMarks(
           setup,
           publishedOnly(activities),
@@ -296,9 +334,105 @@ export function createGradebookRoutes(db: Db): Router {
           })),
           [record.userId],
         );
-        res
-          .status(200)
-          .json({ results, computed: computed.get(record.userId)!, official });
+        res.status(200).json({
+          results,
+          computed: computed.get(record.userId)!,
+          official,
+          revisions,
+          classmates: classmates.filter((student) => student.enrolled),
+        });
+      } catch (cause) {
+        next(cause);
+      }
+    })();
+  });
+
+  /**
+   * A student asks for a mark to be looked at again (F29), for themselves and
+   * for the partners they worked with.
+   *
+   * **The gate is `/results/mine`'s, not `mustManage`'s** — the same three
+   * steps, because the question is the same one: is this person enrolled here.
+   * Everything past it is `fileRequests`', including the one check that cannot
+   * live in a body checker, that the activity belongs to this home and has its
+   * marks out.
+   *
+   * CSRF is already enforced by the mount's `guard`, which is worth saying out
+   * loud: this is the first non-`GET` a student can reach, so it is the first
+   * request that needs `X-CSRF-Token` from somebody who has never sent one.
+   */
+  router.post("/:offeringId/revisions", (req, res, next) => {
+    void (async () => {
+      try {
+        const offeringId = offeringIdFrom(String(req.params.offeringId));
+        const home = await activeHome(db, offeringId);
+        if (!home) {
+          throw new ApiError(404, "not_found", "Esa materia no está activada.");
+        }
+        const { record } = req.session!;
+        const can = await capabilitiesFor(
+          db,
+          actorFrom(record.userId, record.claims),
+          offeringId,
+          home.subjectId,
+        );
+        if (!can.seeOwnMarks) {
+          throw new ApiError(
+            403,
+            "forbidden",
+            "Esto lo pide quien cursa esta materia.",
+          );
+        }
+        await fileRequests(
+          db,
+          offeringId,
+          home.homeId,
+          checkRequest(req.body),
+          record.userId,
+        );
+        res.status(201).json({ filed: true });
+      } catch (cause) {
+        next(cause);
+      }
+    })();
+  });
+
+  /** The teacher's inbox for this offering (F29). Per offering and not per
+   *  teacher: F5 scopes a teacher to the offerings they teach, and F6 asks for
+   *  the cross-offering number as a **count** on "Mis materias". */
+  router.get("/:offeringId/revisions", (req, res, next) => {
+    void (async () => {
+      try {
+        const { homeId } = await mustManage(req);
+        res.status(200).json({ revisions: await listRequests(db, homeId) });
+      } catch (cause) {
+        next(cause);
+      }
+    })();
+  });
+
+  /**
+   * The teacher answers (F29).
+   *
+   * **It writes no mark.** F29 says the teacher can change it from the request
+   * itself; F38 says `saveResults` is the one write path for a result, and a
+   * second one here would be a second place branching on `value_type`. So a
+   * teacher who agrees sends `PUT …/results` as well, and the two calls are
+   * independently meaningful in either order.
+   */
+  router.post("/:offeringId/revisions/:rowId/answer", (req, res, next) => {
+    void (async () => {
+      try {
+        const { homeId } = await mustManage(req);
+        const { record } = req.session!;
+        await answerRequest(
+          db,
+          homeId,
+          uuidFrom(req.params.rowId),
+          checkAnswer(req.body),
+          record.userId,
+        );
+        res.status(200).json({ answered: true });
       } catch (cause) {
         next(cause);
       }

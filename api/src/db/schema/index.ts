@@ -16,5 +16,6 @@ export * from "./official-grade.js";
 export * from "./program-unit.js";
 export * from "./redo-covers.js";
 export * from "./result.js";
+export * from "./revision-request.js";
 export * from "./session.js";
 export * from "./upload.js";

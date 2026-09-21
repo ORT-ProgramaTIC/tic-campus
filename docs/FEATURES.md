@@ -200,6 +200,11 @@ strong` stays in `verify.ts`, so there is no second credential gate either.
 
   **Built 2026-09-20**, minus the counts — pending activities, progress and open revision
   requests are F18's and F29's, and each arrives with the feature that produces the number.
+  **The revision count arrived with F29 (slice 11)**, as one correlated subquery in
+  `listMine`'s own statement rather than a query per offering, and gated on the per-row
+  `teaches` expression: a teacher who is also enrolled in something would otherwise read the
+  open-dispute queue on the card for the subject they _study_. Pending activities and
+  progress are still F18's and still unpaid.
   `GET /api/offerings/mine` is one list with a `roles` array per entry rather than two
   lists, so the teacher who is also enrolled in something is one card and not a merge the
   client has to do.
@@ -792,17 +797,87 @@ observation, suggestion)` plus `recorded_by`/`recorded_at`, unique on the first 
 
 ### F29 · Revision requests
 
-- [x] **Status:** decided
+- [x] **Status:** built (slice 11)
 - **Prior art:** the old `RevisionRequest` model (reason, bonus tasks, comment, reviewed).
 - **Decision:** A student asks for a re-check of a specific **result**, and the request
-  references that result row, not an activity id string. The teacher answers from an inbox
-  and can change the mark from the request itself. Rules:
+  ~~references that result row, not an activity id string.~~ **names it by
+  `(offering_article_id, student_id)`, which is that row's own natural key.** The teacher
+  answers from an inbox and ~~can change the mark from the request itself.~~ **answers, and
+  changes the mark with the call that already exists for it.** Rules:
   - A student can only ask about a **published** result, one they can already see (F24).
   - **One open request per result.** A new one is allowed only after the previous one is
     answered.
   - The request carries a reason and, optionally, **bonus tasks** (extra work the student
     offers), kept from the old model. The teacher's answer is a comment.
   - No request window: a request can be made any time before the year locks (F35).
+
+  **Built 2026-09-20 (slice 11), and amended on the two sentences struck above.** Five
+  things settled by building it:
+
+  - **It names the mark by its natural key, not by `result.id`.** A request is always about
+    a mark that _exists_ — it is never filed against an unmarked activity, and "estaba sin
+    hacer" is a teacher's non-passing mark for work not handed in rather than an absent row
+    — so both keys were populatable and this was a choice. Three things decided it. The body
+    is keyed this way regardless, because a student may only ever read their **own** result
+    and so cannot name a partner's row id, and filing is a group flow (below). The inbox
+    reads home → activities → requests, one join shorter than reaching `offering_article`
+    through `result`, and the same direction `result_article_student_idx` is ordered for.
+    And `result` rows are **deleted** when a teacher empties a cell (F38), so a `result_id`
+    would be a foreign key onto something a teacher can remove: no foreign key in this
+    schema sets `onDelete`, so an emptied cell inside a bulk save would be a 500 on "borrar
+    la nota", and a clear-then-retype would silently mint a new id and orphan the
+    conversation. That last one is rare and is not a revision flow — it is why this is a
+    footnote and not the case. `db.test.mjs` asserts the property directly: the mark goes,
+    the conversation stays.
+  - **Group filing is kept, and it is why `requested_by` is a column.** The old dialog let a
+    student file for themselves _and_ the partners they worked with, and that survives: one
+    `POST` writes one row per student. F29 assumed one filer per result and now does not.
+    Two consequences, both deliberate. `GET …/results/mine` grew a **`classmates`** key,
+    because nothing in campus had ever told a student who is in their class — `roster` had
+    exactly one caller and it was teacher-only — and a partner picker cannot be built
+    without one. That is a real widening: every enrolled student now learns the class list
+    with ids, which is what the old campus shipped, and it carries names and nobody else's
+    marks. And a junk request filed _for_ a classmate blocks their own until a teacher
+    answers it; the old campus has the identical hole, and what makes it tolerable is that
+    `requested_by` is on both reads, so a teacher can see who filed it and clear it in
+    seconds. Rendering the row without the filer would let one student publish words under
+    another's name to the person who grades them.
+  - **Answering writes no mark.** F29's own sentence says the teacher can change it from the
+    request itself; F38 says `saveResults` is the one write path for a `result`, and a second
+    one here would be a second place branching on `value_type`. So the screen makes two
+    calls — `PUT …/results` and `POST …/revisions/:id/answer` — and they are independently
+    meaningful in either order. The rejected alternative was an optional entry on the answer
+    body delegating to `saveResults`; it is a ten-line upgrade the day somebody wants it
+    atomic.
+  - **"One open request per result" is Postgres's, and it is this schema's first partial
+    index.** F18's split: a value domain is one writer's, uniqueness across concurrent
+    writers is not, and two tabs are two writers. `answered_at IS NULL` is the whole of
+    "open" — no `resolved` boolean, which would be a second thing to keep true, the argument
+    `redo_covers` makes against an `is_redo` flag. `offering_home`'s "total, never partial"
+    does **not** apply: that index is total because it is an `ON CONFLICT` target, and a
+    partial index is a perfectly good target as long as its predicate travels with it. So
+    the write is one `INSERT … ON CONFLICT (…) WHERE answered_at IS NULL DO NOTHING
+RETURNING`, and the rows that come back are the ones that landed — the difference is
+    exactly the set that already had one open, with no pre-`SELECT` for two tabs to both
+    pass. Answering therefore unblocks the next request, which is what partial buys.
+  - **There is deliberately no cross-offering inbox.** F5 scopes a teacher to the revisions
+    of the offering they teach, and F6 asks for the number across offerings as a **count**.
+    So `GET /api/homes/:oferta/revisions` is the list and one correlated subquery on
+    `listMine` is the count, and no read here fans out over "everything I teach" —
+    `listMine` remains the only thing that does. The count is gated on the per-row `teaches`
+    expression and not on the caller's roles, or a teacher who also studies something would
+    read the queue on the card for the subject they _study_.
+
+  **What a redo means here needed nothing** (F23, asked again). A redo is an
+  `offering_article` with its own `value_type` and its own `results_published_at`, so "any
+  published graded activity of this home" already covers it and a redo's own mark is
+  disputable exactly like any other. A student may file separately about a TP and about the
+  recuperatorio that covers it: those are two activities and so two results, which is what
+  the rule has said all along.
+
+  **What is still not built:** F30's "a revision was answered" fires here and is F30's, a
+  table and a bell of its own. F35's lock is still nobody's, so "before the year locks"
+  inherits nothing today.
 
 ### F30 · In-app notifications
 
@@ -882,7 +957,7 @@ observation, suggestion)` plus `recorded_by`/`recorded_at`, unique on the first 
   **Amended 2026-09-20 (slice 5), on both deferred points.**
   - **Deactivation is now `archived_at`** (F36), as this item said it would become. The
     condition it named has been met: `offering_article` hangs off the home, and F37 hangs
-    `result` off that and `revision_request` off `result`, so a `DELETE` behind an
+    `result` and — since slice 11 — `revision_request` off that, so a `DELETE` behind an
     idempotent admin button would take a teacher's work with it, and a cascade would
     eventually take students' marks. Re-activating clears the flag and keeps everything.
   - **"Activation creates the home with the subject library's program" is satisfied by
@@ -939,26 +1014,26 @@ worked example).
   implicit because the migrator derives `campus_app`'s grants from whatever is in the
   schema barrel, so a table nobody wrote down is still a table that exists.
 
-  | Table              | Holds                                                                                                                                                                                                                                                                           | Key references                                                                                         |
-  | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-  | `article`          | library article: subject, slug, title, `published_version_id`, `draft_version_id`, `archived_at` (F7, F8, F11)                                                                                                                                                                  | → `public.subject`                                                                                     |
-  | `article_version`  | one saved body: Markdown source, author, created_at (F11)                                                                                                                                                                                                                       | → `article`, `public."user"`                                                                           |
-  | `program_unit`     | the subject's program: title, Markdown contents, position (F15)                                                                                                                                                                                                                 | → `public.subject`                                                                                     |
-  | `offering_home`    | **built (slice 4)**, `final_formula` **slice 8**, `redo_policy` **slice 10** — activation, `archived_at` (F36), the offering's final formula (F21, F40) and what a redo does to what it covers (F23); the section list, the links and the slug fallback arrive with F14 and F32 | → `public.offering`                                                                                    |
-  | `offering_unit`    | the offering's copy of the program units: title, position, `hidden` — **deferred to F14**, see F15 (F13, F15)                                                                                                                                                                   | → `offering_home`, `program_unit` (nullable)                                                           |
-  | `offering_article` | **built (slice 5)**, grading fields **slice 7** — an offering's **use** of an article: unit, position, publish date, visibility (F4), and F18's group, term, value type, scale, due date and `results_published_at`. `offering_unit_id` still waits for F14 (see F15)           | → `offering_home`, `article`, `program_unit`; later `offering_unit`, `offering_group`, `offering_term` |
-  | `offering_group`   | **built (slice 7)** — a teacher-named bucket: name, position (F20, F39)                                                                                                                                                                                                         | → `offering_home`                                                                                      |
-  | `offering_term`    | **built (slice 7)**, `formula` **slice 8** — a term of this offering: name, position, mark formula as source text; the optional dates arrive with F16 (F21, F39, F40)                                                                                                           | → `offering_home`                                                                                      |
-  | `offering_scale`   | **built (slice 7)** — a named ordered scale, plus `offering_scale_level` (name, number, position) (F19, F39)                                                                                                                                                                    | → `offering_home`                                                                                      |
-  | `redo_covers`      | **built (slice 10)** — which uses a redo covers; a redo _is_ an activity, so there is no flag (F23)                                                                                                                                                                             | → `offering_article` ×2                                                                                |
-  | `result`           | **built (slice 7)** — one student's result for one activity (F38)                                                                                                                                                                                                               | → `public."user"`, `offering_article`                                                                  |
-  | `official_grade`   | hand-entered term grade: value, observation, suggestion (F22)                                                                                                                                                                                                                   | → `public."user"`, `offering_term`                                                                     |
-  | `revision_request` | reason, bonus tasks, teacher answer, resolved (F29)                                                                                                                                                                                                                             | → `result`, `public."user"`                                                                            |
-  | `notification`     | user, kind, target, `read_at` (F30)                                                                                                                                                                                                                                             | → `public."user"`                                                                                      |
-  | `upload`           | id, subject, uploader, filename, media type, size, sha256 (F9)                                                                                                                                                                                                                  | → `public.subject`, `public."user"`                                                                    |
-  | `audit_event`      | append-only: actor, action, target, before/after (F41)                                                                                                                                                                                                                          | → `public."user"`                                                                                      |
-  | `session`          | one signed-in person: mapped claims, refresh token, `claims_at`, hard cap, CSRF token (F3)                                                                                                                                                                                      | → `public."user"`                                                                                      |
-  | `login_flow`       | the `state` and PKCE verifier between `/api/auth/login` and its callback, 600 s (F3)                                                                                                                                                                                            | —                                                                                                      |
+  | Table              | Holds                                                                                                                                                                                                                                                                                 | Key references                                                                                         |
+  | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+  | `article`          | library article: subject, slug, title, `published_version_id`, `draft_version_id`, `archived_at` (F7, F8, F11)                                                                                                                                                                        | → `public.subject`                                                                                     |
+  | `article_version`  | one saved body: Markdown source, author, created_at (F11)                                                                                                                                                                                                                             | → `article`, `public."user"`                                                                           |
+  | `program_unit`     | the subject's program: title, Markdown contents, position (F15)                                                                                                                                                                                                                       | → `public.subject`                                                                                     |
+  | `offering_home`    | **built (slice 4)**, `final_formula` **slice 8**, `redo_policy` **slice 10** — activation, `archived_at` (F36), the offering's final formula (F21, F40) and what a redo does to what it covers (F23); the section list, the links and the slug fallback arrive with F14 and F32       | → `public.offering`                                                                                    |
+  | `offering_unit`    | the offering's copy of the program units: title, position, `hidden` — **deferred to F14**, see F15 (F13, F15)                                                                                                                                                                         | → `offering_home`, `program_unit` (nullable)                                                           |
+  | `offering_article` | **built (slice 5)**, grading fields **slice 7** — an offering's **use** of an article: unit, position, publish date, visibility (F4), and F18's group, term, value type, scale, due date and `results_published_at`. `offering_unit_id` still waits for F14 (see F15)                 | → `offering_home`, `article`, `program_unit`; later `offering_unit`, `offering_group`, `offering_term` |
+  | `offering_group`   | **built (slice 7)** — a teacher-named bucket: name, position (F20, F39)                                                                                                                                                                                                               | → `offering_home`                                                                                      |
+  | `offering_term`    | **built (slice 7)**, `formula` **slice 8** — a term of this offering: name, position, mark formula as source text; the optional dates arrive with F16 (F21, F39, F40)                                                                                                                 | → `offering_home`                                                                                      |
+  | `offering_scale`   | **built (slice 7)** — a named ordered scale, plus `offering_scale_level` (name, number, position) (F19, F39)                                                                                                                                                                          | → `offering_home`                                                                                      |
+  | `redo_covers`      | **built (slice 10)** — which uses a redo covers; a redo _is_ an activity, so there is no flag (F23)                                                                                                                                                                                   | → `offering_article` ×2                                                                                |
+  | `result`           | **built (slice 7)** — one student's result for one activity (F38)                                                                                                                                                                                                                     | → `public."user"`, `offering_article`                                                                  |
+  | `official_grade`   | hand-entered term grade: value, observation, suggestion (F22)                                                                                                                                                                                                                         | → `public."user"`, `offering_term`                                                                     |
+  | `revision_request` | **built (slice 11)** — a student disputes a mark: reason, bonus tasks, who filed it, the teacher's answer, `answered_at` (F29). It names the mark by `(offering_article_id, student_id)` and **not** by `result.id`, because a result row is deleted when a cell is emptied — see F29 | → `offering_article`, `public."user"` ×3                                                               |
+  | `notification`     | user, kind, target, `read_at` (F30)                                                                                                                                                                                                                                                   | → `public."user"`                                                                                      |
+  | `upload`           | id, subject, uploader, filename, media type, size, sha256 (F9)                                                                                                                                                                                                                        | → `public.subject`, `public."user"`                                                                    |
+  | `audit_event`      | append-only: actor, action, target, before/after (F41)                                                                                                                                                                                                                                | → `public."user"`                                                                                      |
+  | `session`          | one signed-in person: mapped claims, refresh token, `claims_at`, hard cap, CSRF token (F3)                                                                                                                                                                                            | → `public."user"`                                                                                      |
+  | `login_flow`       | the `state` and PKCE verifier between `/api/auth/login` and its callback, 600 s (F3)                                                                                                                                                                                                  | —                                                                                                      |
 
   The bytes of an upload live on the volume at a path derived from the id; the row is the
   index, which is what makes listing, quotas and garbage collection possible. ~~Serving a
@@ -1101,6 +1176,15 @@ duplicate_name` telling the teacher to save it in two steps, rather than a
   tic-auth's own audit table is: `campus_svc` gets `SELECT, INSERT` and nothing else.
   Writing to tic-auth's `public.audit_event` is not an option — campus holds no privilege
   on it.
+
+  **Slice 11 widened it a fourth time and still did not build it.** F29's whole reason for
+  existing is the question _"who set this to 4, and when"_ — and answering a request is
+  followed by a mark change through `saveResults`, whose upsert overwrites `recorded_by`
+  with the teacher who resolved the dispute. So the one flow where the previous marker is
+  the thing actually being asked about is the flow that destroys it. `revision_request`
+  keeps its own `requested_by`/`requested_at` and `answered_by`/`answered_at`, which records
+  the _conversation_ and deliberately not the mark's history; the mark's history is this
+  item, and there are now three tables wanting it.
 
   **Slice 9 widened it and still did not build it.** `official_grade` carries the same
   inline `recorded_by`/`recorded_at` as `result`, for the same consistency and with the

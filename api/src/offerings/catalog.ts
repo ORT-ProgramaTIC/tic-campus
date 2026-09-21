@@ -8,7 +8,9 @@ import {
   directorySubject,
   directoryTeacherOffering,
 } from "../db/schema/directory.js";
+import { offeringArticle } from "../db/schema/offering-article.js";
 import { offeringHome } from "../db/schema/offering-home.js";
+import { revisionRequest } from "../db/schema/revision-request.js";
 import type { Actor } from "./access.js";
 import { offeringPath } from "./slug.js";
 
@@ -45,6 +47,9 @@ export type MyRole = "student" | "teacher";
 
 export interface MyOffering extends OfferingSummary {
   roles: MyRole[];
+  /** Open revision requests waiting on you here (F6, F29) — **0 unless you
+   *  teach this one**, never a peek at what your own classmates have asked. */
+  openRevisions: number;
 }
 
 /**
@@ -166,8 +171,29 @@ export async function listMine(
           and ${directoryEnrollment.offeringId} = ${directoryOffering.id})`
     : sql<boolean>`false`;
 
+  // F6's count, paid by F29. One correlated subquery in the same statement and
+  // never a query per offering — `campus_svc` is capped at 15 connections and
+  // the pool is 10.
+  //
+  // **Gated on `teaches`, the per-row expression, and not on `asTeacher`.** A
+  // teacher who is also enrolled in something has `asTeacher === true` for every
+  // row they get back, so gating on it would print the count of their own
+  // classmates' open disputes on the card for the subject they *study*.
+  //
+  // `::int` because `count(*)` is a `bigint` and node-postgres hands those back
+  // as strings — the same trap `{ mode: "number" }` exists for on the mark
+  // columns.
+  const openRevisions = asTeacher
+    ? sql<number>`case when ${teaches} then (
+        select count(*)::int from ${revisionRequest}
+        join ${offeringArticle}
+          on ${offeringArticle.id} = ${revisionRequest.offeringArticleId}
+        where ${offeringArticle.offeringHomeId} = ${offeringHome.id}
+          and ${revisionRequest.answeredAt} is null) else 0 end`
+    : sql<number>`0`;
+
   const rows = await db
-    .select({ ...COLUMNS, teaches, studies })
+    .select({ ...COLUMNS, teaches, studies, openRevisions })
     .from(directoryOffering)
     .innerJoin(
       offeringHome,
@@ -183,13 +209,16 @@ export async function listMine(
     .where(and(yearFilter(year), or(teaches, studies)))
     .orderBy(directorySubject.name, directoryOffering.id);
 
-  return rows.map(({ teaches: t, studies: s, ...row }) => ({
-    ...summarize(row),
-    roles: [
-      ...(t ? (["teacher"] as const) : []),
-      ...(s ? (["student"] as const) : []),
-    ],
-  }));
+  return rows.map(
+    ({ teaches: t, studies: s, openRevisions: open, ...row }) => ({
+      ...summarize(row),
+      openRevisions: open,
+      roles: [
+        ...(t ? (["teacher"] as const) : []),
+        ...(s ? (["student"] as const) : []),
+      ],
+    }),
+  );
 }
 
 /**

@@ -56,9 +56,12 @@ the host by `make migrate` and never enters a container.
 of the secrets: it sets no `USER`, so root is the uid that opens them. Adding one means
 chowning both in the same commit (`../DEPLOY-CONVENTIONS.md` §4).
 
-Campus owns seven tables so far — the article library, the program units, the two the login
-needs, `offering_home` and `offering_article` (`api/src/db/schema/`, `docs/FEATURES.md`
-F37). Schema changes are Drizzle migrations:
+Campus owns sixteen tables so far — the article library, the program units, the two the
+login needs, `offering_home` and `offering_article`, the gradebook's four, `result`,
+`official_grade`, `redo_covers` and `revision_request` (`api/src/db/schema/`,
+`docs/FEATURES.md` F37). The barrel `api/src/db/schema/index.ts` is the list: a table
+missing from it is one nothing creates and nothing grants. Schema changes are Drizzle
+migrations:
 
 ```sh
 make migrate        # `make deploy` already does this, after the roll
@@ -212,13 +215,19 @@ The database is `make test-db`'s recipe with the container left running: the rol
 cluster-wide, so throw it away afterwards or the next run fails on
 `role "campus" already exists`.
 
-`api/scripts/harness-redos.mjs` is that whole setup written down — container, migrate, seed,
-sessions, api — with slice 10's assertions on the end. `node scripts/harness-redos.mjs` from
-inside `api/`, and it removes its container either way. **Copy it and replace the
-assertions** rather than writing the scaffolding again: the four things that cost time are
-in its preamble, and the sharpest is that the api must be spawned _after_ the migrate and
-the seed, or its pool points at a database with no schema and the symptom is an
-`ECONNREFUSED` that reads like a port problem.
+`api/scripts/harness-redos.mjs` and `api/scripts/harness-revisions.mjs` are that whole setup
+written down — container, migrate, seed, sessions, api — with one slice's assertions on the
+end. `node scripts/harness-revisions.mjs` from inside `api/`, and it removes its container
+either way. **Copy one and replace the assertions** rather than writing the scaffolding
+again: the four things that cost time are in the preamble, and the sharpest is that the api
+must be spawned _after_ the migrate and the seed, or its pool points at a database with no
+schema and the symptom is an `ECONNREFUSED` that reads like a port problem. Give a new one
+its **own container name and port** — 55432 is `tic-ai-postgres`'s, 55433 is `make
+test-db`'s, 55439 and 55440 are these two.
+
+The revisions one is worth reading before any student-facing route: it is the only thing
+that exercises `csrf_failed` and `no_session` on a **student** write, which nothing in
+`make test-db` can reach.
 
 ## Las materias
 
