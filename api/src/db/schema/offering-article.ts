@@ -26,16 +26,14 @@ import { campus } from "./_schema.js";
  * **The title is not here.** It lives on `article` (F37), because an offering
  * renaming a library article would be a second, invisible copy of it.
  *
- * **The grading fields arrived with slice 7 and `offeringUnitId` still has
- * not.** F18's group, term, type, scale and due date are below, and they are on
- * the *use* rather than on the library article for the same reason the rest of
- * this row is: the same TP is graded in one offering and practice-only in
- * another. Articles still group by `programUnitId` — the subject's own units,
- * straight from the library (F13) — rather than through a per-offering copy of
- * them: F15 also lets an offering reorder and hide units for itself, and that
- * control belongs to F14's home configuration screen, with the `offering_unit`
- * table it needs. Until then every offering shows the library's units in the
- * library's order, and a fix to a unit reaches all of them.
+ * **The grading fields arrived with slice 7.** F18's group, term, type, scale
+ * and due date are below, and they are on the *use* rather than on the library
+ * article for the same reason the rest of this row is: the same TP is graded in
+ * one offering and practice-only in another. Articles group by `programUnitId`
+ * — the subject's own units, straight from the library (F13) — and there is no
+ * per-offering copy of them to point at instead: an offering's order and hiding
+ * of units (F15) are arrays of these same ids on `offering_home` (slice 13), so
+ * a fix to a unit still reaches every offering.
  *
  * **Every grading column is nullable, and that is F18's "a theory note is an
  * article without the metadata" spelled as a schema.** `valueType is not null`

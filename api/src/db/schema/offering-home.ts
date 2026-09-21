@@ -1,5 +1,6 @@
 import {
   integer,
+  jsonb,
   text,
   timestamp,
   uniqueIndex,
@@ -7,6 +8,14 @@ import {
 } from "drizzle-orm/pg-core";
 import { campus } from "./_schema.js";
 import { directoryOfferingTable, directoryUserTable } from "./directory.js";
+
+/** One entry of F14's links list. The url is `http:` or `https:` — `checkHome`
+ *  is the only door in, and it is a trust boundary: this is rendered as an
+ *  `href` for every student of the offering. */
+export interface HomeLink {
+  title: string;
+  url: string;
+}
 
 /**
  * An offering's presence in campus — and **the row's existence is the
@@ -20,12 +29,15 @@ import { directoryOfferingTable, directoryUserTable } from "./directory.js";
  * has not written yet. So an admin says which offerings are ours, and campus's
  * every public read joins through here.
  *
- * **It carries the activation, the offering's articles and the final formula.**
- * F37 also describes a section list and order, a links list and a slug
- * fallback: the sections and the links are F14's and still have no reader, and
- * the slug fallback is F32's answer to a collision that does not exist. Each
- * arrives with the feature that reads it, in its own migration — which is how
- * `finalFormula` arrived with slice 8.
+ * **It carries the activation, the final formula and — since slice 13 — the
+ * home's configuration (F14)**: which sections show and in what order, the
+ * links list, and the offering's own order and hiding of the library's units
+ * (F15). Those are four columns and not tables because nothing points at any
+ * of them: a link has no history and no dependants, and a unit override named
+ * by `program_unit.id` inside an array keeps `unitId` one kind of id forever —
+ * a unit added to the library later simply is not in the array yet, and one
+ * deleted from it matches nothing. F37's slug fallback is still F32's answer to
+ * a collision that does not exist.
  *
  * **Deactivation is `archivedAt`, not a `DELETE`** (F36), since slice 5 —
  * `offering_article` now hangs off this id, and both `result` and
@@ -83,6 +95,20 @@ export const offeringHome = campus.table(
      * `pgEnum`** — the reason is the one `offering_article.value_type` gives.
      */
     redoPolicy: text("redo_policy").notNull().default("max"),
+    /**
+     * The home's sections, in order, as the api's names (F14) — **null is
+     * "never configured"** and reads as `DEFAULT_SECTIONS`, so an offering
+     * nobody touched picks up a section added later. A value domain, so no
+     * `CHECK` (F18); `checkHome` is the checker.
+     */
+    sections: text("sections").array(),
+    /** F14's links, whole list, in order. Removing one is saving without it. */
+    links: jsonb("links").$type<HomeLink[]>().notNull().default([]),
+    /** F15's per-offering half: library unit ids in this offering's order.
+     *  Units not listed go after, in the library's order. */
+    unitOrder: uuid("unit_order").array().notNull().default([]),
+    /** Library units this offering hides from its students. */
+    hiddenUnits: uuid("hidden_units").array().notNull().default([]),
   },
   // Total, never partial: `ON CONFLICT (offering_id)` needs this as its target,
   // and a `WHERE archived_at IS NULL` index is not one.

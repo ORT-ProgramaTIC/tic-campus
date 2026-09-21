@@ -188,7 +188,8 @@ export const directoryOfferingCourse = directory
  * per-block table is `time_slot_teacher`, which **overrides** this one rather
  * than adding to it, and a consumer that unions the two shows people in rooms
  * they are not in (`tic-auth/docs/CONSISTENCY.md`). Campus reads neither
- * timetable table yet, and F14 is where that resolution belongs.
+ * timetable table yet; the timetable is a campus-wide view rather than a home
+ * section (F14, slice 13), and that resolution belongs to it.
  *
  * Teacher-*of-subject* (F5's library permission) has no relation of its own: it
  * is a row here joined through `offering.subject_id`, on any offering of that

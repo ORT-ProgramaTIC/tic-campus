@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mayRead } from "../dist/offerings/content.js";
+import { arrangeUnits, checkHome } from "../dist/offerings/home.js";
 
 // F4's visibility rule on its own — the half that is a decision rather than a
 // join. That it is one function is the point: the home's article list and the
@@ -67,4 +68,106 @@ test("staff read past the clock, so there is no preview mode to build", () => {
   const next = use({ publishedAt: new Date("2030-01-01T00:00:00Z") });
   assert.equal(mayRead(next, TEACHER), true);
   assert.equal(mayRead(next, ANON), false);
+});
+
+/* ── F14, F15: the home's configuration ──────────────────────────────────── */
+
+const U1 = "00000000-0000-4000-8000-000000000001";
+const U2 = "00000000-0000-4000-8000-000000000002";
+const U3 = "00000000-0000-4000-8000-000000000003";
+const program = [U1, U2, U3].map((id, position) => ({
+  id,
+  title: `Unidad ${position + 1}`,
+  contents: "",
+  position,
+}));
+const ids = (units) => units.map((unit) => unit.id);
+
+function home(overrides = {}) {
+  return { sections: ["program", "links"], links: [], ...overrides };
+}
+
+test("an offering's order wins, and a unit it never listed goes last in library order", () => {
+  // U1 and U3 unlisted: a unit added to the library after the offering was
+  // arranged still reaches it (F15's propagation).
+  assert.deepEqual(ids(arrangeUnits(program, [U2], [], false)), [U2, U1, U3]);
+  assert.deepEqual(ids(arrangeUnits(program, [], [], false)), [U1, U2, U3]);
+});
+
+test("an id left behind by a deleted unit matches nothing", () => {
+  const gone = "00000000-0000-4000-8000-00000000dead";
+  assert.deepEqual(ids(arrangeUnits(program, [gone, U3, U1], [gone], false)), [
+    U3,
+    U1,
+    U2,
+  ]);
+});
+
+test("a hidden unit is absent for students and flagged for staff", () => {
+  assert.deepEqual(ids(arrangeUnits(program, [], [U2], false)), [U1, U3]);
+  const staff = arrangeUnits(program, [], [U2], true);
+  assert.deepEqual(
+    staff.map((unit) => unit.hidden),
+    [false, true, false],
+  );
+});
+
+test("checkHome takes a whole configuration and hands it back clean", () => {
+  const saved = checkHome(
+    home({
+      links: [{ title: "  Grupo ", url: "https://chat.whatsapp.com/abc" }],
+      unitOrder: [U2.toUpperCase(), U2],
+    }),
+  );
+  assert.deepEqual(saved, {
+    sections: ["program", "links"],
+    links: [{ title: "Grupo", url: "https://chat.whatsapp.com/abc" }],
+    unitOrder: [U2],
+    hiddenUnits: [],
+  });
+});
+
+test("a link is http or https, and nothing else gets to be an href", () => {
+  for (const url of [
+    "javascript:alert(1)",
+    "JavaScript:alert(1)",
+    "data:text/html,<script>alert(1)</script>",
+    "/relative/path",
+    "chat.whatsapp.com/abc",
+    "ftp://example.com/x",
+  ]) {
+    assert.throws(
+      () => checkHome(home({ links: [{ title: "x", url }] })),
+      { status: 400 },
+      url,
+    );
+  }
+  assert.throws(
+    () => checkHome(home({ links: [{ title: " ", url: "https://a.b" }] })),
+    { status: 400 },
+  );
+});
+
+test("sections are the api's four names, each once", () => {
+  assert.throws(() => checkHome(home({ sections: ["timetable"] })), {
+    status: 400,
+  });
+  assert.throws(() => checkHome(home({ sections: ["links", "links"] })), {
+    status: 400,
+  });
+  assert.throws(() => checkHome(home({ sections: undefined })), {
+    status: 400,
+  });
+  assert.deepEqual(checkHome(home({ sections: [] })).sections, []);
+});
+
+test("the lists have ceilings", () => {
+  const link = { title: "x", url: "https://a.b" };
+  assert.throws(
+    () => checkHome(home({ links: Array.from({ length: 51 }, () => link) })),
+    { status: 400 },
+  );
+  assert.throws(() => checkHome(home({ hiddenUnits: ["not-a-uuid"] })), {
+    status: 400,
+  });
 });

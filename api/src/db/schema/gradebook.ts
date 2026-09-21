@@ -41,8 +41,7 @@ import { offeringHome } from "./offering-home.js";
  * **`offering_term` carries a formula and no dates.** F40 puts the formula
  * source on it and this is the feature that reads it; F21's optional dates
  * still have no reader, so they are still not here — a column arrives with the
- * feature that reads it, the rule `offering_article` follows for
- * `offeringUnitId`.
+ * feature that reads it.
  *
  * **`name` is unique per offering, and that is the database's job** rather than
  * the api's: two concurrent saves cannot both check-then-insert. It is not the

@@ -215,7 +215,7 @@ The database is `make test-db`'s recipe with the container left running: the rol
 cluster-wide, so throw it away afterwards or the next run fails on
 `role "campus" already exists`.
 
-`api/scripts/harness-redos.mjs`, `harness-revisions.mjs` and `harness-history.mjs` are that whole setup
+`api/scripts/harness-redos.mjs`, `harness-revisions.mjs`, `harness-history.mjs` and `harness-home.mjs` are that whole setup
 written down — container, migrate, seed, sessions, api — with one slice's assertions on the
 end. `node scripts/harness-revisions.mjs` from inside `api/`, and it removes its container
 either way. **Copy one and replace the assertions** rather than writing the scaffolding
@@ -223,7 +223,7 @@ again: the four things that cost time are in the preamble, and the sharpest is t
 must be spawned _after_ the migrate and the seed, or its pool points at a database with no
 schema and the symptom is an `ECONNREFUSED` that reads like a port problem. Give a new one
 its **own container name and port** — 55432 is `tic-ai-postgres`'s, 55433 is `make
-test-db`'s, 55439, 55440 and 55441 are these three.
+test-db`'s, 55439, 55440, 55441 and 55442 are these four.
 
 The revisions one is worth reading before any student-facing route: it is the only thing
 that exercises `csrf_failed` and `no_session` on a **student** write, which nothing in

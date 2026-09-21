@@ -13,9 +13,9 @@ import { ApiError } from "../middleware/errors.js";
  * every year at once.
  *
  * F15 also lets an offering reorder or hide units *for itself*. That is not
- * here: it is a home-configuration control, and it arrives with F14's screen
- * and the `offering_unit` table that backs it. Until then the library's order
- * is everyone's order.
+ * here: it is a home-configuration control, `offerings/home.ts`, applied on top
+ * of this read by `homeContent` — so the library screen keeps the library's
+ * order.
  */
 
 export interface Unit {

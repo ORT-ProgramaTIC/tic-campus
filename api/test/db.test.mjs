@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,6 +30,11 @@ import {
   readProgram,
   writeProgram,
 } from "../dist/library/program.js";
+import {
+  checkHome,
+  DEFAULT_SECTIONS,
+  writeHome,
+} from "../dist/offerings/home.js";
 import {
   deleteGroup,
   deleteScale,
@@ -2155,6 +2160,99 @@ test(
         await remap(mb.value);
         await clear(oral.id);
         await useOral({});
+      },
+    );
+
+    await t.test(
+      "a home is configured whole, and the program keeps following the library",
+      async () => {
+        const home = await activeHome(db, ids.current);
+        const teacherCan = await capabilitiesFor(
+          db,
+          actor(ids.teacher, ["teacher"]),
+          ids.current,
+          ids.subject,
+        );
+
+        // Never configured: null reads as the default, and no links.
+        const untouched = await homeContent(db, ids.current, ids.subject, NONE);
+        assert.deepEqual(untouched.sections, [...DEFAULT_SECTIONS]);
+        assert.deepEqual(untouched.links, []);
+
+        const before = await readProgram(db, ids.subject);
+        const [first] = before;
+        const program = await writeProgram(db, ids.subject, [
+          ...before.map(({ id, title, contents }) => ({ id, title, contents })),
+          { title: "Normalización", contents: "" },
+        ]);
+        const added = program.at(-1);
+
+        // As `campus_svc`, which is what proves the new columns are writable
+        // at runtime and not just by the migration's owner.
+        await writeHome(
+          db,
+          home.homeId,
+          ids.subject,
+          checkHome({
+            sections: ["links", "program"],
+            links: [{ title: "Grupo", url: "https://chat.whatsapp.com/x" }],
+            unitOrder: [added.id],
+            hiddenUnits: [first.id],
+          }),
+        );
+
+        const anon = await homeContent(db, ids.current, ids.subject, NONE);
+        assert.deepEqual(anon.sections, ["links", "program"]);
+        assert.deepEqual(anon.links, [
+          { title: "Grupo", url: "https://chat.whatsapp.com/x" },
+        ]);
+        assert.equal(anon.program[0].id, added.id, "the offering's order");
+        assert.ok(
+          !anon.program.some((unit) => unit.id === first.id),
+          "a hidden unit is not sent to a visitor",
+        );
+        const staff = await homeContent(
+          db,
+          ids.current,
+          ids.subject,
+          teacherCan,
+        );
+        assert.equal(
+          staff.program.find((unit) => unit.id === first.id).hidden,
+          true,
+        );
+        // A library rename still reaches the offering: there is no copy.
+        await writeProgram(db, ids.subject, [
+          { id: added.id, title: "Formas normales", contents: "" },
+        ]);
+        assert.equal(
+          (await homeContent(db, ids.current, ids.subject, NONE)).program[0]
+            .title,
+          "Formas normales",
+        );
+
+        await assert.rejects(
+          writeHome(
+            db,
+            home.homeId,
+            ids.subject,
+            checkHome({ sections: [], links: [], unitOrder: [randomUUID()] }),
+          ),
+          { status: 400, code: "unknown_unit" },
+        );
+
+        // A deleted unit leaves its id in the array, and it matches nothing.
+        await deleteUnit(db, ids.subject, added.id);
+        const after = await homeContent(db, ids.current, ids.subject, NONE);
+        assert.ok(!after.program.some((unit) => unit.id === added.id));
+
+        // Put back what the subtest after this one found.
+        await writeHome(
+          db,
+          home.homeId,
+          ids.subject,
+          checkHome({ sections: [...DEFAULT_SECTIONS], links: [] }),
+        );
       },
     );
 

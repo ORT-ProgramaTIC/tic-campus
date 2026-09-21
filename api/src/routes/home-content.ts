@@ -4,6 +4,7 @@ import { isUuid } from "../library/program.js";
 import { ApiError } from "../middleware/errors.js";
 import { actorFrom } from "../offerings/access.js";
 import { manageableHome, removeUse, useArticle } from "../offerings/content.js";
+import { checkHome, writeHome } from "../offerings/home.js";
 import { isValueType, type ValueType } from "../offerings/results.js";
 
 /**
@@ -110,6 +111,28 @@ export function createHomeContentRoutes(db: Db): Router {
           uuidFrom(req.params.articleId),
         );
         res.status(200).json({ used: false, removed });
+      } catch (cause) {
+        next(cause);
+      }
+    })();
+  });
+
+  /**
+   * The home's configuration, whole (F14, F15): sections and their order, the
+   * links, and this offering's order and hiding of the library's units. The
+   * public home read carries it back; there is no staff `GET` of its own.
+   */
+  router.put("/:offeringId/home", (req, res, next) => {
+    void (async () => {
+      try {
+        const { homeId, subjectId } = await mustManage(req);
+        const saved = await writeHome(
+          db,
+          homeId,
+          subjectId,
+          checkHome(req.body),
+        );
+        res.status(200).json(saved);
       } catch (cause) {
         next(cause);
       }

@@ -8,18 +8,24 @@ import {
 } from "../db/schema/gradebook.js";
 import { directoryOffering } from "../db/schema/directory.js";
 import { offeringArticle } from "../db/schema/offering-article.js";
-import { offeringHome } from "../db/schema/offering-home.js";
+import { offeringHome, type HomeLink } from "../db/schema/offering-home.js";
 import { programUnit } from "../db/schema/program-unit.js";
 import { redoCovers } from "../db/schema/redo-covers.js";
 import { result } from "../db/schema/result.js";
 import { ApiError } from "../middleware/errors.js";
-import { readProgram, type Unit } from "../library/program.js";
+import { readProgram } from "../library/program.js";
 import {
   capabilitiesFor,
   NONE,
   type Actor,
   type Capabilities,
 } from "./access.js";
+import {
+  arrangeUnits,
+  DEFAULT_SECTIONS,
+  type HomeUnit,
+  type Section,
+} from "./home.js";
 import type { ValueType } from "./results.js";
 
 /**
@@ -45,8 +51,16 @@ export interface HomeArticle {
   public: boolean;
 }
 
+/**
+ * Everything a home shows, in one read (F14), so the GUI never makes a second
+ * round trip that disagrees with the first. Anonymous callers get the same
+ * shape. An article whose `unitId` is not in `program` — filed under a unit
+ * this offering hides — renders ungrouped, the same as a `null` one.
+ */
 export interface HomeContent {
-  program: Unit[];
+  sections: Section[];
+  links: HomeLink[];
+  program: HomeUnit[];
   articles: HomeArticle[];
 }
 
@@ -77,8 +91,23 @@ export async function homeContent(
   subjectId: number,
   can: Capabilities,
 ): Promise<HomeContent> {
-  const [program, uses] = await Promise.all([
+  const [program, [home], uses] = await Promise.all([
     readProgram(db, subjectId),
+    db
+      .select({
+        sections: offeringHome.sections,
+        links: offeringHome.links,
+        unitOrder: offeringHome.unitOrder,
+        hiddenUnits: offeringHome.hiddenUnits,
+      })
+      .from(offeringHome)
+      .where(
+        and(
+          eq(offeringHome.offeringId, offeringId),
+          isNull(offeringHome.archivedAt),
+        ),
+      )
+      .limit(1),
     db
       .select(USE)
       .from(offeringArticle)
@@ -113,7 +142,17 @@ export async function homeContent(
       restricted: use.restricted,
       public: mayRead(use, NONE),
     }));
-  return { program, articles };
+  return {
+    sections: (home?.sections as Section[] | null) ?? [...DEFAULT_SECTIONS],
+    links: home?.links ?? [],
+    program: arrangeUnits(
+      program,
+      home?.unitOrder ?? [],
+      home?.hiddenUnits ?? [],
+      can.manageOffering || can.editLibrary,
+    ),
+    articles,
+  };
 }
 
 export interface ReadableArticle extends HomeArticle {
