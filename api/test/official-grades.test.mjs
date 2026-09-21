@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { checkGrades } from "../dist/offerings/official-grades.js";
 
-// F22's body checker on its own. The table, the grant and the upsert are in
+// F22's body checker on its own. The table, the grant and the history are in
 // `db.test.mjs`; what is a decision rather than a query is here.
 
 const TERM = "11111111-2222-3333-4444-555555555555";
@@ -100,5 +100,27 @@ test("the envelope is a list, and a bounded one", () => {
         })),
       }),
     /demasiadas/,
+  );
+});
+
+test("a cell sent twice is read once, and the last one wins", () => {
+  // `checkEntries`' guard (F41, slice 17): with a plain insert, two rows for
+  // one cell would share one `now()`, a tie nothing decides.
+  const other = "22222222-3333-4444-5555-666666666666";
+  const got = checkGrades({
+    entries: [
+      { studentId: 7, termId: TERM, value: 4 },
+      { studentId: 8, termId: TERM, value: 5 },
+      { studentId: 7, termId: other, value: 6 },
+      { studentId: 7, termId: TERM, value: 7, observation: "revisada" },
+    ],
+  });
+  assert.deepEqual(
+    got.map((e) => [e.studentId, e.termId, e.value, e.observation]),
+    [
+      [7, TERM, 7, "revisada"],
+      [8, TERM, 5, null],
+      [7, other, 6, null],
+    ],
   );
 });

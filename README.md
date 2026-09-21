@@ -420,6 +420,8 @@ POST   /api/homes/:oferta/gradebook/preview             staff     una fórmula e
 PUT    /api/homes/:oferta/results                       staff     guardar cada celda tocada, en una llamada (F38)
 PUT    /api/homes/:oferta/official-grades               staff     la nota del boletín que se escribe a mano (F22)
 GET    /api/homes/:oferta/results/mine                  sesión    mis notas publicadas, mi nota calculada y mi nota del boletín (F24, F22)
+GET    /api/homes/:oferta/results/:act/:alu/history     staff     cada valor que tuvo una celda, el más nuevo primero, con quién lo puso (F41)
+GET    /api/homes/:oferta/official-grades/:tri/:alu/history staff  lo mismo, para la nota del boletín (F41)
 ```
 
 **La fórmula.** `PUT …/gradebook` carries each term's `formula` and the offering's
@@ -524,8 +526,9 @@ has no home without its grade.
 **One read, and one write, whatever the size.** `GET …/gradebook` answers with the setup,
 the presets, the activities, the roster and the marks together, because the grid cannot
 draw a column header without the groups and a second round trip is a second thing that can
-disagree with the first. `PUT …/results` is one `insert … on conflict do update` for
-everything set and one `delete` for everything cleared. This is campus's first read that is
+disagree with the first. `PUT …/results` is one `insert` for
+everything set and one `delete` for everything cleared — a plain insert, since a changed
+mark is a new row (F41). This is campus's first read that is
 N students × M activities, and `campus_svc` is capped at 15 connections against a pool of
 10 — a loop here is where that number stops being a comment.
 

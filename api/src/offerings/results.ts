@@ -336,6 +336,59 @@ function currentResults(db: Db) {
     .as("current");
 }
 
+export interface MarkVersion {
+  value: number;
+  scaleLevelId: string | null;
+  feedback: string | null;
+  recordedBy: number;
+  recordedByName: string | null;
+  recordedBySurname: string | null;
+  recordedAt: Date;
+}
+
+/**
+ * Every row one cell has held, newest first (F41) — what F29's inbox asks when
+ * a student disputes a mark somebody has since changed. Staff only, through
+ * `manageOffering` on the route.
+ *
+ * `officialGradeHistory` is its sibling and says why the order is
+ * `currentResults`' and why the marker's name rides along. The join to the
+ * activity is the scoping: another home's activity is an empty list.
+ */
+export async function resultHistory(
+  db: Db,
+  homeId: string,
+  activityId: string,
+  studentId: number,
+): Promise<MarkVersion[]> {
+  return db
+    .select({
+      value: result.value,
+      scaleLevelId: result.scaleLevelId,
+      feedback: result.feedback,
+      recordedBy: result.recordedBy,
+      recordedByName: directoryUser.name,
+      recordedBySurname: directoryUser.surname,
+      recordedAt: result.recordedAt,
+    })
+    .from(result)
+    .innerJoin(
+      offeringArticle,
+      and(
+        eq(offeringArticle.id, result.offeringArticleId),
+        eq(offeringArticle.offeringHomeId, homeId),
+      ),
+    )
+    .innerJoin(directoryUser, eq(directoryUser.id, result.recordedBy))
+    .where(
+      and(
+        eq(result.offeringArticleId, activityId),
+        eq(result.studentId, studentId),
+      ),
+    )
+    .orderBy(desc(result.recordedAt), desc(result.id));
+}
+
 /* ── What a student sees (F24) ───────────────────────────────────────────── */
 
 export interface MyResult {

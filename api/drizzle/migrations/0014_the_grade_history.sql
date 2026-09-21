@@ -1,0 +1,2 @@
+DROP INDEX "campus"."official_grade_term_student_idx";--> statement-breakpoint
+CREATE INDEX "official_grade_term_student_idx" ON "campus"."official_grade" USING btree ("offering_term_id","student_id","recorded_at" DESC NULLS LAST);

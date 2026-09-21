@@ -1,4 +1,6 @@
-// An ad-hoc HTTP pass over slice 12 (F41): `result` became append-only, so a
+// An ad-hoc HTTP pass over slices 12 and 17 (F41): `result` became
+// append-only in 12, `official_grade` in 17, and 17 added the two history
+// routes. Slice 12's own summary: `result` became append-only, so a
 // re-mark inserts a row instead of overwriting one, and the two readers that
 // read a mark's value take the pair's newest through a `DISTINCT ON` subquery.
 // It is not part of `pnpm test` — `make test-db` proves the history; this
@@ -344,6 +346,104 @@ async function main() {
       ).rows[0].count,
     );
   assert.equal(await count(), 3, "una fila por el cuerpo, no dos");
+
+  /* ── The history over the wire (slice 17) ────────────────────────────────── */
+
+  const VERSION = [
+    "feedback",
+    "recordedAt",
+    "recordedBy",
+    "recordedByName",
+    "recordedBySurname",
+    "scaleLevelId",
+    "value",
+  ];
+  const markHistory = `${home}/results/${tpId}/${ids.student}/history`;
+  const read = await call(teacher, "GET", markHistory);
+  assert.equal(read.status, 200, JSON.stringify(read.body));
+  assert.deepEqual(keys(read.body.history[0]), VERSION);
+  assert.deepEqual(
+    read.body.history.map((h) => [h.value, h.recordedBy, h.recordedByName]),
+    [
+      [8, ids.teacher, "Ana"],
+      [7, ids.admin, "Eve"],
+      [4, ids.teacher, "Ana"],
+    ],
+    "la más nueva primero, con quién la puso",
+  );
+  // Staff of *this* offering only: the student, and a teacher of last year's.
+  assert.equal(code(await call(student, "GET", markHistory)), "forbidden");
+  const other = await login(ids.otherTeacher, ["teacher"]);
+  assert.equal(code(await call(other, "GET", markHistory)), "forbidden");
+  assert.equal(
+    (await call(teacher, "GET", `${home}/results/nope/${ids.student}/history`))
+      .status,
+    404,
+  );
+
+  /* ── The boletín grade keeps its history too (slice 17) ────────────────── */
+
+  const official = (who, value, observation) =>
+    call(who, "PUT", `${home}/official-grades`, {
+      entries: [{ studentId: ids.student, termId, value, observation }],
+    });
+  assert.equal((await official(teacher, 4, null)).status, 200);
+  // Same number, new words: a new row, because the row is the whole record.
+  assert.equal(
+    (await official(admin, 4, "Faltó a la integradora.")).status,
+    200,
+  );
+  // The same cell twice in one body: the last one, once.
+  const twiceGraded = await call(teacher, "PUT", `${home}/official-grades`, {
+    entries: [
+      { studentId: ids.student, termId, value: 5 },
+      { studentId: ids.student, termId, value: 6, observation: "Mejoró." },
+    ],
+  });
+  assert.equal(twiceGraded.status, 200, JSON.stringify(twiceGraded.body));
+
+  const graded = (await grid()).body.officialGrades.filter(
+    (g) => g.termId === termId && g.studentId === ids.student,
+  );
+  assert.equal(graded.length, 1, "una nota del boletín por celda");
+  assert.deepEqual(keys(graded[0]), [
+    "observation",
+    "recordedAt",
+    "recordedBy",
+    "studentId",
+    "suggestion",
+    "termId",
+    "value",
+  ]);
+  assert.deepEqual([graded[0].value, graded[0].observation], [6, "Mejoró."]);
+  const ownGrade = (await mine()).body.official;
+  assert.equal(ownGrade.length, 1);
+  assert.deepEqual(keys(ownGrade[0]), [
+    "observation",
+    "suggestion",
+    "termId",
+    "value",
+  ]);
+  assert.equal(ownGrade[0].value, 6);
+  assert.equal(typeof ownGrade[0].value, "number", "número, no string");
+
+  const gradeHistory = `${home}/official-grades/${termId}/${ids.student}/history`;
+  const past = await call(teacher, "GET", gradeHistory);
+  assert.equal(past.status, 200, JSON.stringify(past.body));
+  assert.deepEqual(
+    past.body.history.map((h) => [h.value, h.observation, h.recordedBy]),
+    [
+      [6, "Mejoró.", ids.teacher],
+      [4, "Faltó a la integradora.", ids.admin],
+      [4, null, ids.teacher],
+    ],
+    "tres filas: el cuerpo repetido dejó una sola",
+  );
+  assert.equal(code(await call(student, "GET", gradeHistory)), "forbidden");
+
+  const clearedGrade = await official(teacher, null, null);
+  assert.equal(clearedGrade.status, 200);
+  assert.deepEqual((await call(teacher, "GET", gradeHistory)).body.history, []);
 
   /* ── A clear takes the history with it ─────────────────────────────────── */
 

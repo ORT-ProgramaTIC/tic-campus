@@ -25,6 +25,7 @@ import {
   gradebook,
   listActivities,
   myResults,
+  resultHistory,
   roster,
   saveResults,
 } from "../offerings/results.js";
@@ -40,6 +41,7 @@ import {
 import {
   checkGrades,
   myOfficialGrades,
+  officialGradeHistory,
   readOfficialGrades,
   saveOfficialGrades,
 } from "../offerings/official-grades.js";
@@ -351,6 +353,52 @@ export function createGradebookRoutes(db: Db, yearLock: YearLock): Router {
       }
     })();
   });
+
+  /**
+   * Every value one cell has held, newest first, with who set each and when
+   * (F41). A read, so it still answers on a locked year. The student id goes
+   * through the offering id's digit check, which is all either is.
+   */
+  router.get(
+    "/:offeringId/results/:activityId/:studentId/history",
+    (req, res, next) => {
+      void (async () => {
+        try {
+          const { homeId } = await mustManage(req);
+          const history = await resultHistory(
+            db,
+            homeId,
+            uuidFrom(req.params.activityId),
+            offeringIdFrom(req.params.studentId),
+          );
+          res.status(200).json({ history });
+        } catch (cause) {
+          next(cause);
+        }
+      })();
+    },
+  );
+
+  /** The same, for the boletín grade (F22, F41). */
+  router.get(
+    "/:offeringId/official-grades/:termId/:studentId/history",
+    (req, res, next) => {
+      void (async () => {
+        try {
+          const { homeId } = await mustManage(req);
+          const history = await officialGradeHistory(
+            db,
+            homeId,
+            uuidFrom(req.params.termId),
+            offeringIdFrom(req.params.studentId),
+          );
+          res.status(200).json({ history });
+        } catch (cause) {
+          next(cause);
+        }
+      })();
+    },
+  );
 
   /**
    * A student's own marks, published only (F24).

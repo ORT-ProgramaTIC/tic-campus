@@ -51,6 +51,7 @@ import {
   gradebook,
   listActivities,
   myResults,
+  resultHistory,
   saveResults,
 } from "../dist/offerings/results.js";
 import {
@@ -71,6 +72,7 @@ import {
 } from "../dist/offerings/marks.js";
 import {
   myOfficialGrades,
+  officialGradeHistory,
   readOfficialGrades,
   saveOfficialGrades,
 } from "../dist/offerings/official-grades.js";
@@ -1565,7 +1567,8 @@ test(
           [[term, 7]],
         );
 
-        // Update: the upsert, not a second row.
+        // Update: a second row since slice 17 (F41), and still one per student
+        // per term on the grid.
         await saveOfficialGrades(db, home.homeId, [grade(8.5)], ids.admin);
         const after = await readOfficialGrades(db, home.homeId);
         assert.equal(after.length, 1, "one row per student per term");
@@ -2630,6 +2633,190 @@ test(
         await root.query(`update "user" set dni = null where id = $1`, [
           ids.student,
         ]);
+      },
+    );
+
+    await t.test(
+      "a changed boletín grade keeps the one it replaced, and both histories read",
+      async () => {
+        // F41, slice 17: `official_grade` is append-only, the way `result` has
+        // been since slice 12, and both histories are readable through the api.
+        const { home, setup } = await setupNow();
+        const [term] = setup.terms;
+        const tp = (await listActivities(db, home.homeId)).find(
+          (a) => a.slug === "tp-sql",
+        );
+        assert.ok(tp && term, "slice 7's activity and term are still here");
+        const { rows: priorResults } = await svc.query(
+          "select id from campus.result",
+        );
+        const { rows: priorGrades } = await svc.query(
+          "select * from campus.official_grade where offering_term_id = $1 and student_id = $2",
+          [term.id, ids.student],
+        );
+        const name = async (id) =>
+          (
+            await root.query(`select name, surname from "user" where id = $1`, [
+              id,
+            ])
+          ).rows[0];
+        const grade = (value, observation, by) =>
+          saveOfficialGrades(
+            db,
+            home.homeId,
+            [
+              {
+                studentId: ids.student,
+                termId: term.id,
+                clear: value === null,
+                ...(value === null ? {} : { value }),
+                observation,
+                suggestion: null,
+              },
+            ],
+            by,
+          );
+        const raw = async () =>
+          (
+            await svc.query(
+              `select value::float8 as value, observation, recorded_by, recorded_at
+                 from campus.official_grade
+                where offering_term_id = $1 and student_id = $2
+                order by recorded_at, id`,
+              [term.id, ids.student],
+            )
+          ).rows;
+        const current = async () => ({
+          grid: (await readOfficialGrades(db, home.homeId)).filter(
+            (g) => g.termId === term.id && g.studentId === ids.student,
+          ),
+          mine: (await myOfficialGrades(db, home.homeId, ids.student)).filter(
+            (g) => g.termId === term.id,
+          ),
+        });
+
+        await grade(null, null, ids.teacher);
+        await grade(4, null, ids.teacher);
+        const [first] = await raw();
+        // Same number, new words: the row is the whole record, so a new row.
+        await grade(4, "Faltó a la integradora.", ids.admin);
+
+        const rows = await raw();
+        assert.equal(rows.length, 2, "the first 4 is still there");
+        assert.deepEqual(rows[0], first, "and still says who set it");
+        assert.equal(first.recorded_by, ids.teacher);
+
+        const now = await current();
+        assert.equal(now.grid.length, 1, "one grade per cell on the grid");
+        assert.equal(now.grid[0].observation, "Faltó a la integradora.");
+        assert.equal(now.grid[0].recordedBy, ids.admin);
+        assert.equal(now.mine.length, 1);
+        assert.equal(now.mine[0].observation, "Faltó a la integradora.");
+        assert.equal(typeof now.grid[0].value, "number");
+        assert.equal(typeof now.mine[0].value, "number");
+
+        // The history, newest first — so its head is what the grid shows —
+        // with the marker's name, which nothing else on the boletín carries.
+        const history = await officialGradeHistory(
+          db,
+          home.homeId,
+          term.id,
+          ids.student,
+        );
+        const admin = await name(ids.admin);
+        const teacher = await name(ids.teacher);
+        assert.deepEqual(
+          history.map((h) => [
+            h.value,
+            h.observation,
+            h.recordedBy,
+            h.recordedByName,
+            h.recordedBySurname,
+          ]),
+          [
+            [
+              4,
+              "Faltó a la integradora.",
+              ids.admin,
+              admin.name,
+              admin.surname,
+            ],
+            [4, null, ids.teacher, teacher.name, teacher.surname],
+          ],
+        );
+        assert.equal(typeof history[0].value, "number");
+        assert.deepEqual(
+          await officialGradeHistory(
+            db,
+            home.homeId,
+            "99999999-9999-4999-8999-999999999999",
+            ids.student,
+          ),
+          [],
+          "a term that is not this home's is an empty list",
+        );
+
+        // A mark's history reads the same way.
+        await saveResults(
+          db,
+          home.homeId,
+          [
+            {
+              studentId: ids.student,
+              activityId: tp.id,
+              clear: false,
+              value: 5,
+              feedback: "otra vez",
+            },
+          ],
+          ids.teacher,
+        );
+        const marks = await resultHistory(db, home.homeId, tp.id, ids.student);
+        assert.ok(marks.length >= 2, "the new mark and what it replaced");
+        assert.deepEqual(
+          [marks[0].value, marks[0].feedback, marks[0].recordedBy],
+          [5, "otra vez", ids.teacher],
+        );
+        assert.equal(marks[0].recordedByName, teacher.name);
+        assert.equal(
+          (await gradebook(db, home.homeId, ids.current)).results.find(
+            (r) => r.activityId === tp.id && r.studentId === ids.student,
+          ).value,
+          marks[0].value,
+          "the history's head is the grid's cell",
+        );
+        assert.ok(marks[0].recordedAt >= marks[1].recordedAt);
+
+        // A clear withdraws the grade and its history with it (F38's blank).
+        await grade(null, null, ids.admin);
+        assert.deepEqual(await raw(), []);
+        assert.deepEqual(
+          await officialGradeHistory(db, home.homeId, term.id, ids.student),
+          [],
+        );
+
+        // Put back what the subtest after this one found.
+        await svc.query("delete from campus.result where id <> all($1)", [
+          priorResults.map((row) => row.id),
+        ]);
+        for (const row of priorGrades) {
+          await svc.query(
+            `insert into campus.official_grade
+               (id, student_id, offering_term_id, value, observation,
+                suggestion, recorded_by, recorded_at)
+             values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [
+              row.id,
+              row.student_id,
+              row.offering_term_id,
+              row.value,
+              row.observation,
+              row.suggestion,
+              row.recorded_by,
+              row.recorded_at,
+            ],
+          );
+        }
       },
     );
 

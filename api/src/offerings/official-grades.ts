@@ -1,5 +1,6 @@
-import { and, eq, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, or } from "drizzle-orm";
 import type { Db, Tx } from "../db/client.js";
+import { directoryUser } from "../db/schema/directory.js";
 import { offeringTerm } from "../db/schema/gradebook.js";
 import { officialGrade } from "../db/schema/official-grade.js";
 import { isUuid } from "../library/program.js";
@@ -42,25 +43,45 @@ export async function readOfficialGrades(
   db: Db,
   homeId: string,
 ): Promise<OfficialGrade[]> {
+  const current = currentOfficialGrades(db);
   return db
     .select({
-      termId: officialGrade.offeringTermId,
-      studentId: officialGrade.studentId,
-      value: officialGrade.value,
-      observation: officialGrade.observation,
-      suggestion: officialGrade.suggestion,
-      recordedBy: officialGrade.recordedBy,
-      recordedAt: officialGrade.recordedAt,
+      termId: current.offeringTermId,
+      studentId: current.studentId,
+      value: current.value,
+      observation: current.observation,
+      suggestion: current.suggestion,
+      recordedBy: current.recordedBy,
+      recordedAt: current.recordedAt,
     })
-    .from(officialGrade)
+    .from(current)
     .innerJoin(
       offeringTerm,
       and(
-        eq(offeringTerm.id, officialGrade.offeringTermId),
+        eq(offeringTerm.id, current.offeringTermId),
         eq(offeringTerm.offeringHomeId, homeId),
       ),
     )
     .orderBy(offeringTerm.position);
+}
+
+/**
+ * Each pair's current grade: its newest row. `official_grade` is append-only
+ * (F41, slice 17), and this is `currentResults` in `results.ts` for the other
+ * table — a subquery for the same `DISTINCT ON` reason, `id` breaking a tie for
+ * the same one. `checkGrades` already makes a tie impossible.
+ */
+function currentOfficialGrades(db: Db) {
+  return db
+    .selectDistinctOn([officialGrade.offeringTermId, officialGrade.studentId])
+    .from(officialGrade)
+    .orderBy(
+      officialGrade.offeringTermId,
+      officialGrade.studentId,
+      desc(officialGrade.recordedAt),
+      desc(officialGrade.id),
+    )
+    .as("current");
 }
 
 export interface MyOfficialGrade {
@@ -82,12 +103,61 @@ export async function myOfficialGrades(
   homeId: string,
   studentId: number,
 ): Promise<MyOfficialGrade[]> {
+  const current = currentOfficialGrades(db);
   return db
     .select({
-      termId: officialGrade.offeringTermId,
+      termId: current.offeringTermId,
+      value: current.value,
+      observation: current.observation,
+      suggestion: current.suggestion,
+    })
+    .from(current)
+    .innerJoin(
+      offeringTerm,
+      and(
+        eq(offeringTerm.id, current.offeringTermId),
+        eq(offeringTerm.offeringHomeId, homeId),
+      ),
+    )
+    .where(eq(current.studentId, studentId))
+    .orderBy(offeringTerm.position);
+}
+
+export interface OfficialGradeVersion {
+  value: number;
+  observation: string | null;
+  suggestion: string | null;
+  recordedBy: number;
+  recordedByName: string | null;
+  recordedBySurname: string | null;
+  recordedAt: Date;
+}
+
+/**
+ * Every row one cell has held, newest first (F41) — staff only, through
+ * `manageOffering` on the route.
+ *
+ * **Newest first with `currentOfficialGrades`' own tiebreak**, so the first row
+ * is always the grade the grid shows. The marker's name rides along because
+ * nothing else on the boletín names a teacher, and an id is not an answer to
+ * "who put the 4". The join to the term is the scoping: a term that is not
+ * this home's is an empty list, the same as a cell nobody graded.
+ */
+export async function officialGradeHistory(
+  db: Db,
+  homeId: string,
+  termId: string,
+  studentId: number,
+): Promise<OfficialGradeVersion[]> {
+  return db
+    .select({
       value: officialGrade.value,
       observation: officialGrade.observation,
       suggestion: officialGrade.suggestion,
+      recordedBy: officialGrade.recordedBy,
+      recordedByName: directoryUser.name,
+      recordedBySurname: directoryUser.surname,
+      recordedAt: officialGrade.recordedAt,
     })
     .from(officialGrade)
     .innerJoin(
@@ -97,8 +167,14 @@ export async function myOfficialGrades(
         eq(offeringTerm.offeringHomeId, homeId),
       ),
     )
-    .where(eq(officialGrade.studentId, studentId))
-    .orderBy(offeringTerm.position);
+    .innerJoin(directoryUser, eq(directoryUser.id, officialGrade.recordedBy))
+    .where(
+      and(
+        eq(officialGrade.offeringTermId, termId),
+        eq(officialGrade.studentId, studentId),
+      ),
+    )
+    .orderBy(desc(officialGrade.recordedAt), desc(officialGrade.id));
 }
 
 /* ── Writing ─────────────────────────────────────────────────────────────── */
@@ -127,7 +203,11 @@ export interface GradeInput {
  * - **every student is enrolled or already carries something here**, which is
  *   `writableStudents` and not a second copy of F38's rule.
  *
- * Then **one** upsert and **one** delete, whatever the size of the batch.
+ * Then **one** insert and **one** delete, whatever the size of the batch. The
+ * insert is not an upsert: a changed grade is a new row (F41), and so is a
+ * changed observation — the row is the whole record. The delete takes **every**
+ * row of the pair, for `saveResults`' reason: a clear withdraws a grade that
+ * should never have existed, and F38's blank stays one shape, no rows.
  */
 export async function saveOfficialGrades(
   db: Db | Tx,
@@ -185,26 +265,9 @@ export async function saveOfficialGrades(
     });
   }
 
-  if (rows.length > 0) {
-    await db
-      .insert(officialGrade)
-      .values(rows)
-      .onConflictDoUpdate({
-        target: [officialGrade.offeringTermId, officialGrade.studentId],
-        // Raw `excluded` for the reason `saveResults` gives: drizzle-orm 0.45
-        // ships no helper, and interpolating a column renders
-        // `excluded."official_grade"."value"`, which is not a thing.
-        set: {
-          value: sql`excluded."value"`,
-          observation: sql`excluded."observation"`,
-          suggestion: sql`excluded."suggestion"`,
-          recordedBy: sql`excluded."recorded_by"`,
-          // `defaultNow()` only fires on insert, and an overwritten grade is a
-          // grade somebody set today.
-          recordedAt: sql`now()`,
-        },
-      });
-  }
+  // A plain insert, as in `saveResults` — and it has to be: with no unique
+  // index there is no `ON CONFLICT` target left for Postgres to accept.
+  if (rows.length > 0) await db.insert(officialGrade).values(rows);
 
   if (clears.length > 0) {
     await db
@@ -247,7 +310,7 @@ export function checkGrades(raw: unknown): GradeInput[] {
   if (entries.length > 5000) {
     throw new ApiError(400, "invalid_body", "Son demasiadas notas de una vez.");
   }
-  return entries.map((raw_entry) => {
+  const checked = entries.map((raw_entry): GradeInput => {
     if (typeof raw_entry !== "object" || raw_entry === null) {
       throw new ApiError(
         400,
@@ -283,6 +346,14 @@ export function checkGrades(raw: unknown): GradeInput[] {
     if (entry.value === null) return { ...base, clear: true };
     return { ...base, clear: false, value: checkMark(entry.value) };
   });
+  // One entry per cell, the last one winning — `checkEntries`' guard, for the
+  // same reason: a plain insert of a cell sent twice is two rows with the same
+  // `now()`, a tie nothing decides.
+  return [
+    ...new Map(
+      checked.map((entry) => [`${entry.studentId}:${entry.termId}`, entry]),
+    ).values(),
+  ];
 }
 
 /** The house text field: absent or `null` becomes `null`, anything else is a

@@ -347,10 +347,12 @@ strong` stays in `verify.ts`, so there is no second credential gate either.
 
 ### F12 · Several teachers editing
 
-- [x] **Status:** decided
+- [x] **Status:** built (slice 5)
 - **Decision:** Any teacher of the subject can edit (F5). Last write wins, but saving a
   draft based on a stale version warns and shows who changed it. No realtime co-editing,
   which would cost a CRDT and a websocket for a case that is rare in practice.
+  `saveDraft` (`library/articles.ts`) refuses a stale `baseVersionId` with `409 stale_draft`
+  and names who moved the draft.
 
 ### F13 · Units
 
@@ -650,7 +652,8 @@ jsonb`, `unit_order uuid[]`, `hidden_units uuid[]`, written whole by `PUT
   `Notas Fijas` sheet and its `Nota - Observación - Sugerencia` string parsing.
 
   **Built 2026-09-20.** `campus.official_grade` is `(student, offering_term, value,
-observation, suggestion)` plus `recorded_by`/`recorded_at`, unique on the first two.
+observation, suggestion)` plus `recorded_by`/`recorded_at`, ~~unique on the first two~~
+  **one row per time a cell was graded since slice 17 (F41)**.
   `PUT /api/homes/:oferta/official-grades` writes it; the grid reads it in
   `GET …/gradebook` as `officialGrades` and the student reads their own in
   `GET …/results/mine` as `official`. Four things settled by building it:
@@ -677,9 +680,10 @@ observation, suggestion)` plus `recorded_by`/`recorded_at`, unique on the first 
     outlive its grade. An entry with no `value` at all is a `400` rather than a silent
     no-op. `checkMark` is reused rather than restated, so the 1–10 with two decimals cannot
     drift from the gradebook's.
-  - **`recorded_by`/`recorded_at` are copied from `result`, and this is not F41.** The
-    write is an upsert, so they answer _who holds this grade now_, not _who set it to 4_ —
-    the same gap F41 exists to close, now in two tables instead of one.
+  - **`recorded_by`/`recorded_at` are copied from `result`, and ~~this is not F41~~ this
+    is F41 since slice 17.** ~~The write is an upsert, so they answer _who holds this
+    grade now_, not _who set it to 4_.~~ The write is a plain insert, the current grade is
+    the pair's newest row, and each row answers _who set this, and when_.
 
   **Enrolment is F38's rule and is now shared rather than restated.** `writableStudents`
   moved to taking the home alone and reads both `result` and `official_grade`: a departed
@@ -1335,7 +1339,7 @@ duplicate_name` telling the teacher to save it in two steps, rather than a
 
 ### F41 · Campus keeps its own audit log
 
-- [x] **Status:** built (slice 12), for marks
+- [x] **Status:** built (slice 12, marks; slice 17, official grades)
 - **Decision:** An append-only `campus.audit_event` records who changed a result or an
   official grade, who published an activity, and who activated, locked or unlocked an
   offering. Grades get contested, so _"who set this to 4, and when"_ has to be answerable;
@@ -1367,9 +1371,37 @@ duplicate_name` telling the teacher to save it in two steps, rather than a
   get a small event table of their own — two mechanisms because there are two
   shapes: a mark is high-volume and per cell and its history _is_ the data; an
   activation is a rare admin act, where a generic event row is the honest fit.
-  **`official_grade` is not covered either**: it still upserts, with the hole
-  slice 9 describes below, and the same index change would close it. This is
-  the item's fifth appearance, and its last for marks.
+  ~~**`official_grade` is not covered either**: it still upserts, with the hole
+  slice 9 describes below, and the same index change would close it.~~ **Closed
+  in slice 17**, below. This is the item's fifth appearance, and its last for
+  marks.
+
+  **Built 2026-09-21 (slice 17), for official grades, the same way, and made
+  readable.** Migration `0014_the_grade_history` drops the unique
+  `official_grade_term_student_idx` and recreates it on `(offering_term_id,
+student_id, recorded_at DESC)`; `saveOfficialGrades` inserts, and it has to,
+  since `ON CONFLICT` needs a unique index to target. `readOfficialGrades` and
+  `myOfficialGrades` read the pair's newest row through a `DISTINCT ON`
+  subquery, `currentResults`' shape; no payload moved. `checkGrades` now
+  deduplicates a cell sent twice, last one winning, as `checkEntries` does.
+  **A text-only edit is a new row too**: the row is the whole record — value,
+  observation and suggestion — so changing the observation of a 4 is somebody
+  setting the boletín's words, and that is worth the row. A clear still deletes
+  every row of the pair (F38). F27's import compares against the current row,
+  so an unchanged cell still mints nothing.
+
+  **The history is readable, by staff.** Until now "who set this to 4" was
+  answerable in SQL only. `GET /api/homes/:oferta/results/:activityId/:studentId/history`
+  and `GET …/official-grades/:termId/:studentId/history` answer `{ history }`,
+  newest first, gated on `manageOffering` like the grid and open on a locked
+  year because they are reads. The order is the current row's own
+  (`recorded_at DESC, id DESC`), so `history[0]` is always the cell the grid
+  shows. Each row carries `recordedByName`/`recordedBySurname`, joined the way
+  F29's inbox joins its filer, because nothing else on the boletín names a
+  teacher and an id is not an answer. A foreign activity or term is an empty
+  list rather than a 404: the join is the scoping, and it leaks nothing.
+  Students get no history — they read the current value, and F29 is where they
+  argue with it.
 
   **Slice 11 widened it a fourth time and still did not build it.** F29's whole reason for
   existing is the question _"who set this to 4, and when"_ — and answering a request is

@@ -1,9 +1,9 @@
 import {
+  index,
   integer,
   numeric,
   text,
   timestamp,
-  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 import { campus } from "./_schema.js";
@@ -37,9 +37,12 @@ import { offeringTerm } from "./gradebook.js";
  * observation cannot outlive its grade, which is right — the text explains a
  * number, and on its own it is a comment with no home.
  *
- * **`recordedBy`/`recordedAt` answer who holds this grade now, not who set it
- * to 4.** Copied from `result` for the consistency, and it is *not* F41: the
- * write is an upsert, so the previous marker goes with the previous grade.
+ * **`recordedBy` answers who set this grade, and when — per row.** The table
+ * is append-only (F41, slice 17), the way `result` has been since slice 12: a
+ * change inserts a new row, and the current grade is the pair's newest by
+ * `recorded_at`, then `id`. The row is the whole record, not only the number,
+ * so changing the observation alone is a new row too. Only a clear deletes,
+ * and it deletes the pair's whole history, for `result`'s reason.
  */
 export const officialGrade = campus.table(
   "official_grade",
@@ -71,11 +74,14 @@ export const officialGrade = campus.table(
       .defaultNow(),
   },
   (t) => [
-    /** Term first, for the reason `result_article_student_idx` gives: every
-     *  read here starts from an offering's terms and collects their rows. */
-    uniqueIndex("official_grade_term_student_idx").on(
+    /** **Not unique** since slice 17: a pair has one row per time it was
+     *  graded. Term first, for the reason `result_article_student_idx` gives —
+     *  every read here starts from an offering's terms — and the trailing
+     *  `recorded_at DESC` makes "the pair's newest row" a range scan. */
+    index("official_grade_term_student_idx").on(
       t.offeringTermId,
       t.studentId,
+      t.recordedAt.desc(),
     ),
   ],
 );
