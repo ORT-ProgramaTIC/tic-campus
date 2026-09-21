@@ -71,6 +71,13 @@
       "when": 1789954786253,
       "tag": "0009_the_revision",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789960088288,
+      "tag": "0010_the_mark_history",
+      "breakpoints": true
     }
   ]
 }

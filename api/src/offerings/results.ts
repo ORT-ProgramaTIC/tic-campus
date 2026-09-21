@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { article } from "../db/schema/article.js";
 import { directoryEnrollment, directoryUser } from "../db/schema/directory.js";
@@ -290,18 +290,49 @@ export async function roster(
 
 async function readMarks(db: Db, activityIds: string[]): Promise<Mark[]> {
   if (activityIds.length === 0) return [];
+  const current = currentResults(db);
   return db
     .select({
-      activityId: result.offeringArticleId,
-      studentId: result.studentId,
-      value: result.value,
-      scaleLevelId: result.scaleLevelId,
-      feedback: result.feedback,
-      recordedBy: result.recordedBy,
-      recordedAt: result.recordedAt,
+      activityId: current.offeringArticleId,
+      studentId: current.studentId,
+      value: current.value,
+      scaleLevelId: current.scaleLevelId,
+      feedback: current.feedback,
+      recordedBy: current.recordedBy,
+      recordedAt: current.recordedAt,
     })
+    .from(current)
+    .where(inArray(current.offeringArticleId, activityIds));
+}
+
+/**
+ * Each pair's current mark: its newest row. `result` is append-only (F41), so
+ * a pair holds one row per time it was marked, and the two readers that read a
+ * mark's *value* read it through this. Everything else that touches `result`
+ * asks whether a row exists, where the extra rows do not matter.
+ *
+ * **A subquery, and not `selectDistinctOn` on the reader itself**, because
+ * Postgres wants a `DISTINCT ON`'s leading `ORDER BY` terms to be the distinct
+ * expressions, and `myResults` orders by position. Wrapped, the ordering stays
+ * inside and each reader keeps its own.
+ *
+ * `id` breaks a tie on `recorded_at`. A uuid's order means nothing, but it is
+ * *stable*, and a tie decided by the plan is the bug that shows up once in
+ * production. `checkEntries` already makes a tie impossible — one batch cannot
+ * carry a pair twice, and `now()` is the transaction's — so this is the floor
+ * under that, not the mechanism.
+ */
+function currentResults(db: Db) {
+  return db
+    .selectDistinctOn([result.offeringArticleId, result.studentId])
     .from(result)
-    .where(inArray(result.offeringArticleId, activityIds));
+    .orderBy(
+      result.offeringArticleId,
+      result.studentId,
+      desc(result.recordedAt),
+      desc(result.id),
+    )
+    .as("current");
 }
 
 /* ── What a student sees (F24) ───────────────────────────────────────────── */
@@ -343,6 +374,11 @@ export async function myResults(
   studentId: number,
   now = new Date(),
 ): Promise<MyResult[]> {
+  // ponytail: the student filter is pushed into `current`, but the home join
+  // cannot be, so this collects every row the student has anywhere before
+  // joining — and the index leads with the activity, so that is a scan. Fine
+  // at one school's size; a lateral join from `offering_article` is the fix.
+  const current = currentResults(db);
   const rows = await db
     .select({
       activityId: offeringArticle.id,
@@ -352,16 +388,16 @@ export async function myResults(
       termId: offeringArticle.offeringTermId,
       valueType: offeringArticle.valueType,
       dueAt: offeringArticle.dueAt,
-      value: result.value,
+      value: current.value,
       scaleLevel: offeringScaleLevel.name,
-      feedback: result.feedback,
+      feedback: current.feedback,
       position: offeringArticle.position,
     })
-    .from(result)
+    .from(current)
     .innerJoin(
       offeringArticle,
       and(
-        eq(offeringArticle.id, result.offeringArticleId),
+        eq(offeringArticle.id, current.offeringArticleId),
         eq(offeringArticle.offeringHomeId, homeId),
         isNotNull(offeringArticle.valueType),
         isNotNull(offeringArticle.resultsPublishedAt),
@@ -371,9 +407,9 @@ export async function myResults(
     .innerJoin(article, eq(article.id, offeringArticle.articleId))
     .leftJoin(
       offeringScaleLevel,
-      eq(offeringScaleLevel.id, result.scaleLevelId),
+      eq(offeringScaleLevel.id, current.scaleLevelId),
     )
-    .where(eq(result.studentId, studentId))
+    .where(eq(current.studentId, studentId))
     .orderBy(offeringArticle.position);
   // The ids alone, unfiltered: a covered activity whose marks are not published
   // yet is an id this student can do nothing with, and the redo's own title
@@ -417,9 +453,12 @@ export interface EntryInput {
  *   still fix the mark of somebody who transferred out in April.
  * - the value matches the activity's type.
  *
- * Then **one** `insert … on conflict do update` for everything set and **one**
- * `delete` for everything cleared, whatever the size of the batch. See
- * `gradebook()` for why a loop here is not an option.
+ * Then **one** `insert` for everything set and **one** `delete` for everything
+ * cleared, whatever the size of the batch. See `gradebook()` for why a loop
+ * here is not an option. The insert is not an upsert: a changed mark is a new
+ * row (F41). The delete takes **every** row of the pair, history included —
+ * a clear withdraws a mark that should never have existed, it does not change
+ * a grade, and F38's blank stays one shape: no rows.
  */
 export async function saveResults(
   db: Db,
@@ -472,26 +511,10 @@ export async function saveResults(
     });
   }
 
-  if (rows.length > 0) {
-    await db
-      .insert(result)
-      .values(rows)
-      .onConflictDoUpdate({
-        target: [result.offeringArticleId, result.studentId],
-        // Raw `excluded`, because drizzle-orm 0.45 ships no helper for it — and
-        // **never** interpolate a column into one of these: `${result.value}`
-        // renders `excluded."result"."value"`, which is not a thing.
-        set: {
-          value: sql`excluded."value"`,
-          scaleLevelId: sql`excluded."scale_level_id"`,
-          feedback: sql`excluded."feedback"`,
-          recordedBy: sql`excluded."recorded_by"`,
-          // `defaultNow()` only fires on insert, and an overwritten mark is a
-          // mark somebody set today.
-          recordedAt: sql`now()`,
-        },
-      });
-  }
+  // A plain insert: `result` is append-only (F41), so a changed mark is a new
+  // row and the one it supersedes keeps who set it and when. The current mark
+  // is the pair's newest — see `currentResults`.
+  if (rows.length > 0) await db.insert(result).values(rows);
 
   if (clears.length > 0) {
     await db
@@ -642,7 +665,7 @@ export function checkEntries(raw: unknown): EntryInput[] {
   if (entries.length > 5000) {
     throw new ApiError(400, "invalid_body", "Son demasiadas notas de una vez.");
   }
-  return entries.map((raw_entry) => {
+  const checked = entries.map((raw_entry): EntryInput => {
     if (typeof raw_entry !== "object" || raw_entry === null) {
       throw new ApiError(
         400,
@@ -689,6 +712,15 @@ export function checkEntries(raw: unknown): EntryInput[] {
       "Cada nota lleva `value`, `done` o `scaleLevelId` — y `value: null` para borrarla.",
     );
   });
+  // One entry per cell, the last one winning — what the upsert used to do. The
+  // insert is plain now (F41), so a cell sent twice would be two rows with the
+  // same `now()`: a tie nothing decides. Postgres used to refuse that batch on
+  // its own; this is the guard that replaces it.
+  return [
+    ...new Map(
+      checked.map((entry) => [`${entry.studentId}:${entry.activityId}`, entry]),
+    ).values(),
+  ];
 }
 
 function checkFeedback(raw: unknown): string | null {

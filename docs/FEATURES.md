@@ -1026,12 +1026,12 @@ worked example).
   | `offering_term`    | **built (slice 7)**, `formula` **slice 8** — a term of this offering: name, position, mark formula as source text; the optional dates arrive with F16 (F21, F39, F40)                                                                                                                 | → `offering_home`                                                                                      |
   | `offering_scale`   | **built (slice 7)** — a named ordered scale, plus `offering_scale_level` (name, number, position) (F19, F39)                                                                                                                                                                          | → `offering_home`                                                                                      |
   | `redo_covers`      | **built (slice 10)** — which uses a redo covers; a redo _is_ an activity, so there is no flag (F23)                                                                                                                                                                                   | → `offering_article` ×2                                                                                |
-  | `result`           | **built (slice 7)** — one student's result for one activity (F38)                                                                                                                                                                                                                     | → `public."user"`, `offering_article`                                                                  |
+  | `result`           | **built (slice 7)**, append-only **slice 12** — one student's result for one activity, one row per time it was marked; the newest row is the mark (F38, F41)                                                                                                                          | → `public."user"`, `offering_article`                                                                  |
   | `official_grade`   | hand-entered term grade: value, observation, suggestion (F22)                                                                                                                                                                                                                         | → `public."user"`, `offering_term`                                                                     |
   | `revision_request` | **built (slice 11)** — a student disputes a mark: reason, bonus tasks, who filed it, the teacher's answer, `answered_at` (F29). It names the mark by `(offering_article_id, student_id)` and **not** by `result.id`, because a result row is deleted when a cell is emptied — see F29 | → `offering_article`, `public."user"` ×3                                                               |
   | `notification`     | user, kind, target, `read_at` (F30)                                                                                                                                                                                                                                                   | → `public."user"`                                                                                      |
   | `upload`           | id, subject, uploader, filename, media type, size, sha256 (F9)                                                                                                                                                                                                                        | → `public.subject`, `public."user"`                                                                    |
-  | `audit_event`      | append-only: actor, action, target, before/after (F41)                                                                                                                                                                                                                                | → `public."user"`                                                                                      |
+  | `audit_event`      | **not built** — marks keep their own history in `result` (slice 12); publishes, activations and locks are unaudited until something asks (F41)                                                                                                                                        | → `public."user"`                                                                                      |
   | `session`          | one signed-in person: mapped claims, refresh token, `claims_at`, hard cap, CSRF token (F3)                                                                                                                                                                                            | → `public."user"`                                                                                      |
   | `login_flow`       | the `state` and PKCE verifier between `/api/auth/login` and its callback, 600 s (F3)                                                                                                                                                                                                  | —                                                                                                      |
 
@@ -1047,7 +1047,8 @@ worked example).
 
 - [x] **Status:** built (slice 7)
 - **Decision:** `result` is `(student_id, offering_article_id, value, scale_level,
-feedback, recorded_by, recorded_at)`, unique on the first two. **It carries no course**:
+feedback, recorded_by, recorded_at)`, ~~unique on the first two~~ **one row per time a
+  mark was set, the newest being the mark (slice 12)**. **It carries no course**:
   a result records that this person did this activity and got this, and a student who later
   changes course does not change that fact. The absence is a feature, not a gap — there is
   no composite key to maintain and no history to rewrite when a roster does.
@@ -1066,10 +1067,12 @@ feedback, recorded_by, recorded_at)`, unique on the first two. **It carries no c
     evaluator to branch on. So `value: null` in a save is the **only** way to
     empty a cell, said out loud: `{ "done": false }` is _not done_ and
     `{ "value": 1 }` is a one, and a falsy check would have deleted both.
-  - **The unique index is declared `(offering_article_id, student_id)`**, the
+  - ~~**The unique index is declared `(offering_article_id, student_id)`**, the
     other way round from the sentence above. The uniqueness is the same either
     way, and this is the order every read goes in — from a home's activities to
-    their rows, never from a student — so one index does both jobs.
+    their rows, never from a student — so one index does both jobs.~~ **The
+    index is `(offering_article_id, student_id, recorded_at DESC)` and is not
+    unique** — see slice 12 below. The column order and its reason stand.
   - **The enrolment check really is create-only, and that has two halves.** The
     writable set is _enrolled now, plus whoever already carries a row here_, so
     a teacher can still fix the mark of somebody who transferred out in April.
@@ -1080,6 +1083,25 @@ feedback, recorded_by, recorded_at)`, unique on the first two. **It carries no c
     to 9 has to move the marks given on it, so `writeSetup` rewrites them in the
     same transaction. Without that the display would change and the mark would
     not.
+
+  **Amended 2026-09-21 (slice 12), on the two sentences struck above.** `result`
+  is no longer unique on `(offering_article_id, student_id)`: a changed mark is
+  a new row, and the current mark is the pair's newest by `recorded_at`, then
+  `id`. F41 has the reason. Three things did not move:
+
+  - **The blank rule is unchanged.** No rows is blank, still one shape for the
+    evaluator to skip. A clear deletes **every** row of the pair, history
+    included, because a cleared mark is a withdrawn one — wrong student, wrong
+    activity — and not a grade that changed. A tombstone would have cost the
+    nullable `value` this item refused, a filter in every other read, and an
+    activity that could never leave an offering once marked.
+  - **The scale remap is still an `UPDATE`**, and it rewrites superseded rows
+    too. It is not a mark: the student still got `MB`, and a row per mark would
+    say whoever edited the scale re-marked the class. `scale_level_id` is the
+    truth and `value` is what that level is worth _now_.
+  - **Only the two readers of a value changed.** The grid and `/results/mine`
+    read through one `DISTINCT ON` subquery; every other read of `result` asks
+    whether a row exists, where the extra rows do not matter. No payload moved.
 
 ### F39 · Groups, terms and scales are rows
 
@@ -1168,7 +1190,7 @@ duplicate_name` telling the teacher to save it in two steps, rather than a
 
 ### F41 · Campus keeps its own audit log
 
-- [x] **Status:** decided
+- [x] **Status:** built (slice 12), for marks
 - **Decision:** An append-only `campus.audit_event` records who changed a result or an
   official grade, who published an activity, and who activated, locked or unlocked an
   offering. Grades get contested, so _"who set this to 4, and when"_ has to be answerable;
@@ -1176,6 +1198,33 @@ duplicate_name` telling the teacher to save it in two steps, rather than a
   tic-auth's own audit table is: `campus_svc` gets `SELECT, INSERT` and nothing else.
   Writing to tic-auth's `public.audit_event` is not an option — campus holds no privilege
   on it.
+
+  **Built 2026-09-21 (slice 12), for marks, by deleting a unique index.** The
+  answer was not a table. `recorded_by` and `recorded_at` were always the right
+  columns; they lied only because the write was an upsert, so they said _who
+  holds this mark now_ and the previous marker went with the previous mark.
+  `result` is now append-only — a change inserts, the current mark is the pair's
+  newest row — and per row the two columns answer exactly _who set this value,
+  and when_. The 4 a student disputes under F29 is still there, with whoever set
+  it, after the teacher changes it to a 7.
+
+  **The rejected alternative was a sibling `audit_event` table** written by
+  `saveResults` in the same transaction. It is a second write that a future
+  writer can forget, and a second copy of the mark free to drift from the first.
+  "There is only one write path, so there is only one place to remember" is the
+  argument that usually saves that design, and here it cuts the other way: with
+  one writer, a parallel log that writer maintains by hand buys nothing. Nor is
+  it append-only **by grant**: a clear still deletes the pair's rows (F38), so
+  `campus_app` keeps `DELETE` on `result`.
+
+  **Publishes, activations and locks are left unaudited, on purpose,** until
+  something asks. They are not rows in `result`, and if they are wanted they
+  get a small event table of their own — two mechanisms because there are two
+  shapes: a mark is high-volume and per cell and its history _is_ the data; an
+  activation is a rare admin act, where a generic event row is the honest fit.
+  **`official_grade` is not covered either**: it still upserts, with the hole
+  slice 9 describes below, and the same index change would close it. This is
+  the item's fifth appearance, and its last for marks.
 
   **Slice 11 widened it a fourth time and still did not build it.** F29's whole reason for
   existing is the question _"who set this to 4, and when"_ — and answering a request is

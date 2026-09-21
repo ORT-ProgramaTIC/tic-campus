@@ -1,0 +1,2 @@
+DROP INDEX "campus"."result_article_student_idx";--> statement-breakpoint
+CREATE INDEX "result_article_student_idx" ON "campus"."result" USING btree ("offering_article_id","student_id","recorded_at" DESC NULLS LAST);

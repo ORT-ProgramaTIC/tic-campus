@@ -1989,6 +1989,176 @@ test(
     );
 
     await t.test(
+      "a changed mark keeps the one it replaced, and a clear keeps nothing",
+      async () => {
+        // F41, slice 12: `result` is append-only. Every subtest before this one
+        // already wrote through the plain insert, so start from a clear rather
+        // than from whatever history they left.
+        const { home, setup } = await setupNow();
+        const tp = (await listActivities(db, home.homeId)).find(
+          (a) => a.slug === "tp-sql",
+        );
+        const save = (activityId, fields, by) =>
+          saveResults(
+            db,
+            home.homeId,
+            [
+              {
+                studentId: ids.student,
+                activityId,
+                clear: false,
+                feedback: null,
+                ...fields,
+              },
+            ],
+            by,
+          );
+        const clear = (activityId) =>
+          saveResults(
+            db,
+            home.homeId,
+            [
+              {
+                studentId: ids.student,
+                activityId,
+                clear: true,
+                feedback: null,
+              },
+            ],
+            ids.teacher,
+          );
+        /** Every row of the pair, oldest first — the history, raw. */
+        const history = async (activityId) =>
+          (
+            await svc.query(
+              `select value::float8 as value, scale_level_id, recorded_by, recorded_at
+                 from campus.result
+                where offering_article_id = $1 and student_id = $2
+                order by recorded_at, id`,
+              [activityId, ids.student],
+            )
+          ).rows;
+        /** What both readers say the mark is now. */
+        const reads = async (activityId) => ({
+          grid: (await gradebook(db, home.homeId, ids.current)).results.filter(
+            (r) => r.activityId === activityId && r.studentId === ids.student,
+          ),
+          mine: (await myResults(db, home.homeId, ids.student)).filter(
+            (r) => r.activityId === activityId,
+          ),
+        });
+
+        await clear(tp.id);
+        await save(tp.id, { value: 4 }, ids.teacher);
+        const [first] = await history(tp.id);
+        await save(tp.id, { value: 7 }, ids.admin);
+
+        const rows = await history(tp.id);
+        assert.equal(rows.length, 2, "the 4 is still there");
+        assert.deepEqual(
+          rows[0],
+          first,
+          "and still says who set it, and when — the whole slice",
+        );
+        assert.equal(first.recorded_by, ids.teacher);
+        assert.equal(rows[1].recorded_by, ids.admin);
+        assert.ok(rows[1].recorded_at > first.recorded_at);
+
+        const now = await reads(tp.id);
+        assert.equal(now.grid.length, 1, "one mark per cell on the grid");
+        assert.equal(now.grid[0].value, 7, "the newest row wins");
+        assert.equal(now.grid[0].recordedBy, ids.admin);
+        assert.equal(
+          now.mine.length,
+          1,
+          "one mark per activity for the student",
+        );
+        assert.equal(now.mine[0].value, 7);
+        // A `DISTINCT ON` subquery is a new path for the numeric to travel.
+        assert.equal(typeof now.grid[0].value, "number");
+        assert.equal(typeof now.mine[0].value, "number");
+
+        // A clear withdraws the mark and its history with it (F38's blank).
+        await clear(tp.id);
+        assert.deepEqual(await history(tp.id), []);
+        assert.deepEqual(await reads(tp.id), { grid: [], mine: [] });
+
+        // And history starts over from one row — which is also the 9 by the
+        // admin that the subtest after this one, and slice 11's cleanup, expect.
+        await save(tp.id, { value: 9 }, ids.admin);
+        assert.equal((await history(tp.id)).length, 1);
+        assert.equal((await reads(tp.id)).mine[0].value, 9);
+
+        // Moving what a level is worth moves every row given on it — the
+        // superseded ones included — and adds none: it is not a mark (F38).
+        // The oral left the gradebook two subtests ago; grade it again.
+        const scale = setup.scales[0];
+        const mb = scale.levels.find((l) => l.name === "MB");
+        const other = scale.levels.find((l) => l.id !== mb.id);
+        const [{ id: oralArticle }] = (
+          await svc.query(
+            "select id from campus.article where subject_id = $1 and slug = 'oral'",
+            [ids.subject],
+          )
+        ).rows;
+        const useOral = (grading) =>
+          useArticle(db, home.homeId, ids.subject, oralArticle, {
+            programUnitId: null,
+            position: 1,
+            publishedAt: PUBLISHED,
+            restricted: false,
+            ...NOT_GRADED,
+            ...grading,
+          });
+        await useOral({
+          valueType: "scale",
+          offeringScaleId: scale.id,
+          offeringTermId: setup.terms[0].id,
+        });
+        const oral = (await listActivities(db, home.homeId)).find(
+          (a) => a.slug === "oral",
+        );
+        await save(oral.id, { scaleLevelId: mb.id }, ids.teacher);
+        await save(oral.id, { scaleLevelId: other.id }, ids.admin);
+
+        const remap = (value) =>
+          writeSetup(db, home.homeId, {
+            groups: [],
+            terms: [],
+            scales: [
+              {
+                id: scale.id,
+                name: scale.name,
+                levels: scale.levels.map((l) =>
+                  l.id === mb.id ? { ...l, value } : l,
+                ),
+              },
+            ],
+          });
+        await remap(6);
+        const remapped = await history(oral.id);
+        assert.equal(remapped.length, 2, "a remap adds no row");
+        assert.equal(remapped[0].scale_level_id, mb.id);
+        assert.equal(remapped[0].value, 6, "the superseded MB moved with it");
+        assert.equal(
+          remapped[0].recorded_by,
+          ids.teacher,
+          "and kept its marker",
+        );
+        assert.equal(
+          (await reads(oral.id)).grid[0].value,
+          other.value,
+          "the current mark is not on MB, so it did not move",
+        );
+
+        // Put back what the subtests after this one found.
+        await remap(mb.value);
+        await clear(oral.id);
+        await useOral({});
+      },
+    );
+
+    await t.test(
       "the admin listing shows what is not activated yet",
       async () => {
         const all = await listForAdmin(db, 2027);

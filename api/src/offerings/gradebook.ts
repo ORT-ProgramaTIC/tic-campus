@@ -533,6 +533,12 @@ async function writeLevels(
       .set({ name: level.name, value: level.value, position })
       .where(eq(offeringScaleLevel.id, level.id));
     if (before.value !== level.value) {
+      // An `UPDATE`, in an append-only table, on purpose — do not turn it into
+      // an insert. This is not a mark: the student still got `MB`, and a new
+      // row per mark would record that whoever edited the scale re-marked the
+      // whole class. `scale_level_id` is the truth and `value` is the number
+      // the evaluator reads for it, so the invariant is "value is what this
+      // level is worth *now*", and that holds for superseded rows too (F38).
       await tx
         .update(result)
         .set({ value: level.value })

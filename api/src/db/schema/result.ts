@@ -1,9 +1,9 @@
 import {
+  index,
   integer,
   numeric,
   text,
   timestamp,
-  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 import { campus } from "./_schema.js";
@@ -36,10 +36,13 @@ import { offeringArticle } from "./offering-article.js";
  * thing for the evaluator to branch on. `scaleLevel` keeps what the teacher
  * actually picked, for display.
  *
- * **`recordedBy` answers who holds this mark now, not who set it to 4.** The
- * write is an upsert, so the previous marker is overwritten with the previous
- * mark. Grades get contested and that question has to be answerable — by
- * F41's `audit_event`, which is still unbuilt.
+ * **`recordedBy` answers who set this value, and when — per row.** The table
+ * is append-only (F41, slice 12): changing a mark inserts a new row, and the
+ * current mark is the pair's newest by `recorded_at`, then `id`. The row it
+ * supersedes stays, with the marker and the moment it was set, so "who put the
+ * 4" is still answerable after somebody changes it to a 7 — which is exactly
+ * when F29 asks it. Only a clear deletes, and it deletes the pair's whole
+ * history: a cleared mark is one that should never have existed.
  */
 export const result = campus.table(
   "result",
@@ -74,15 +77,16 @@ export const result = campus.table(
   },
   (t) => [
     /**
-     * F38's "unique on the first two", **with the columns the other way
-     * round**. The uniqueness is the same either way, and this order is the one
-     * the gradebook reads in: every query here starts from a home's activities
-     * and collects their rows, never from a student. One index does both jobs,
-     * and a second on `(offering_article_id)` would be its own prefix.
+     * **Not unique** since slice 12: a pair has one row per time it was marked.
+     * The columns go the gradebook's way round — every query here starts from
+     * a home's activities and collects their rows, never from a student — and
+     * the trailing `recorded_at DESC` is what makes "the pair's newest row" a
+     * range scan instead of a sort.
      */
-    uniqueIndex("result_article_student_idx").on(
+    index("result_article_student_idx").on(
       t.offeringArticleId,
       t.studentId,
+      t.recordedAt.desc(),
     ),
   ],
 );

@@ -108,11 +108,48 @@ test("a scale entry names a level and nothing else", () => {
   assert.equal(entry.scaleLevelId, "99999999-8888-7777-6666-555555555555");
 });
 
+test("a cell sent twice is read once, and the last one wins", () => {
+  // What the upsert did, and what Postgres enforced by refusing the batch.
+  // With a plain insert, two rows for one cell share one `now()`: a tie.
+  const got = entries(
+    { ...CELL, value: 4 },
+    { ...CELL, value: null },
+    { ...CELL, value: 7, feedback: "revisada" },
+  );
+  assert.equal(got.length, 1);
+  assert.equal(got[0].clear, false);
+  assert.equal(got[0].value, 7);
+  assert.equal(got[0].feedback, "revisada");
+});
+
+test("different cells are not deduped into each other", () => {
+  const other = "22222222-3333-4444-5555-666666666666";
+  const got = entries(
+    { ...CELL, value: 4 },
+    { ...CELL, studentId: 8, value: 5 },
+    { ...CELL, activityId: other, value: 6 },
+  );
+  assert.deepEqual(
+    got.map((e) => [e.studentId, e.activityId, e.value]),
+    [
+      [7, CELL.activityId, 4],
+      [8, CELL.activityId, 5],
+      [7, other, 6],
+    ],
+  );
+});
+
 test("the batch is capped short of pg's bind-parameter ceiling", () => {
-  const cell = { ...CELL, value: 8 };
-  assert.equal(entries(...Array(5000).fill(cell)).length, 5000);
+  // One student each: the same cell 5000 times is one entry once it is read.
+  const cells = (n) =>
+    Array.from({ length: n }, (_, i) => ({
+      ...CELL,
+      studentId: i + 1,
+      value: 8,
+    }));
+  assert.equal(entries(...cells(5000)).length, 5000);
   assert.throws(
-    () => entries(...Array(5001).fill(cell)),
+    () => entries(...cells(5001)),
     (cause) => cause.status === 400,
   );
 });
