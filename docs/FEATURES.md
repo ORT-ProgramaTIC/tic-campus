@@ -324,7 +324,11 @@ strong` stays in `verify.ts`, so there is no second credential gate either.
 
 ### F10 · Embeds
 
-- [x] **Status:** decided — waits for the renderer
+- [x] **Status:** built (slice 19): the allowlist is `web/src/embeds.ts`. The renderer
+      (F44) wires it
+- **Built:** `embedSrc(url)` returns a src **rebuilt** from validated ids (never the
+  teacher's URL) or `null`; `embedAttrs` is what goes on the `<iframe>`. The directive syntax
+  is the renderer's to choose. YouTube goes to `youtube-nocookie.com`.
 - **Decision:** Allowlisted iframes: YouTube, Google Slides, CodePen. The allowlist lives in
   code, not config. The old "presentaciones" articles were mostly this.
 

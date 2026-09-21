@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc && cp index.html dist/",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "pnpm build && node --test test/*.test.mjs"
   }
 }
