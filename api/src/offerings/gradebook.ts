@@ -1,5 +1,5 @@
 import { and, eq, inArray } from "drizzle-orm";
-import type { Db } from "../db/client.js";
+import type { Db, Tx } from "../db/client.js";
 import {
   offeringGroup,
   offeringScale,
@@ -389,8 +389,6 @@ async function mine(
     );
   }
 }
-
-type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 /**
  * **F39's open half, closed** (slice 8): every formula of the offering, checked

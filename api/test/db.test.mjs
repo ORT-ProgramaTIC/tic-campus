@@ -61,6 +61,10 @@ import {
 } from "../dist/offerings/revisions.js";
 import { markRead, myNotifications } from "../dist/offerings/notifications.js";
 import {
+  importGradebook,
+  readExport,
+} from "../dist/offerings/gradebook-csv.js";
+import {
   computeBothViews,
   computeMarks,
   publishedOnly,
@@ -2453,6 +2457,179 @@ test(
             where id = $1`,
           [tp.id, was.published_at, was.results_published_at, was.notify],
         );
+      },
+    );
+
+    // --- slice 16: the gradebook as a CSV file (F27) -------------------------
+
+    await t.test(
+      "a gradebook goes out as CSV and comes back only where it changed",
+      async () => {
+        const { home, setup } = await setupNow();
+        const tp = (
+          await gradebook(db, home.homeId, ids.current)
+        ).activities.find((a) => a.slug === "tp-sql");
+        const [term] = setup.terms;
+        assert.ok(tp && term, "slice 7's activity and term are still here");
+        const { rows: priorResults } = await svc.query(
+          "select id from campus.result",
+        );
+        const { rows: priorGrades } = await svc.query(
+          "select * from campus.official_grade where offering_term_id = $1 and student_id = $2",
+          [term.id, ids.student],
+        );
+        await root.query(`update "user" set dni = '30111222' where id = $1`, [
+          ids.student,
+        ]);
+
+        // A mark with feedback and a grade with an observation, which the file
+        // does not carry and a changed cell must not lose.
+        await saveResults(
+          db,
+          home.homeId,
+          [
+            {
+              studentId: ids.student,
+              activityId: tp.id,
+              clear: false,
+              value: 6,
+              feedback: "revisá el join",
+            },
+          ],
+          ids.admin,
+        );
+        await saveOfficialGrades(
+          db,
+          home.homeId,
+          [
+            {
+              studentId: ids.student,
+              termId: term.id,
+              clear: false,
+              value: 7,
+              observation: "atenta",
+              suggestion: null,
+            },
+          ],
+          ids.admin,
+        );
+        const rowsNow = async () =>
+          (await svc.query("select count(*)::int as n from campus.result"))
+            .rows[0].n;
+        const current = async () => {
+          const grid = await gradebook(db, home.homeId, ids.current);
+          const official = await readOfficialGrades(db, home.homeId);
+          return {
+            mark: grid.results.find(
+              (r) => r.studentId === ids.student && r.activityId === tp.id,
+            ),
+            grade: official.find(
+              (g) => g.studentId === ids.student && g.termId === term.id,
+            ),
+          };
+        };
+
+        const csv = await readExport(db, home.homeId, ids.current);
+        assert.match(csv, /30111222/, "the DNI rides in the export");
+        assert.doesNotMatch(csv, /Docente/, "somebody who left does not");
+
+        // The export back in, untouched, is no write at all (F41).
+        const before = await rowsNow();
+        const roundTrip = await importGradebook(
+          db,
+          home.homeId,
+          ids.current,
+          Buffer.from(csv),
+          ids.admin,
+        );
+        assert.deepEqual(roundTrip.problems, []);
+        assert.deepEqual(roundTrip.changes, []);
+        assert.equal(await rowsNow(), before);
+
+        // Matched by DNI, as Excel formats one. A dry run writes nothing.
+        const file = Buffer.from(
+          `DNI;TP [tp-sql];${term.name} [nota oficial]\n30.111.222;8,5;9\n`,
+        );
+        const dry = await importGradebook(
+          db,
+          home.homeId,
+          ids.current,
+          file,
+          null,
+        );
+        assert.equal(dry.applied, false);
+        assert.deepEqual(
+          dry.changes.map((c) => [c.from, c.to]),
+          [
+            ["6", "8,5"],
+            ["7", "9"],
+          ],
+        );
+        assert.equal(await rowsNow(), before);
+        assert.equal((await current()).mark.value, 6);
+
+        const applied = await importGradebook(
+          db,
+          home.homeId,
+          ids.current,
+          file,
+          ids.admin,
+        );
+        assert.equal(applied.applied, true);
+        assert.equal(await rowsNow(), before + 1, "one changed mark, one row");
+        const after = await current();
+        assert.equal(after.mark.value, 8.5);
+        assert.equal(after.mark.feedback, "revisá el join", "carried over");
+        assert.equal(after.grade.value, 9);
+        assert.equal(after.grade.observation, "atenta", "carried over");
+
+        // One bad cell and nothing lands — not even the good one beside it.
+        const refused = await importGradebook(
+          db,
+          home.homeId,
+          ids.current,
+          Buffer.from(
+            `Id;TP [tp-sql];${term.name} [nota oficial]\n${ids.student};4;11\n${ids.orphanStudent};5;\n`,
+          ),
+          ids.admin,
+        );
+        assert.equal(refused.applied, false);
+        assert.deepEqual(
+          refused.problems.map((p) => p.code),
+          ["bad_value", "not_writable"],
+        );
+        assert.equal(await rowsNow(), before + 1);
+        assert.equal((await current()).mark.value, 8.5);
+
+        // Put back what the subtests after this one found.
+        await svc.query("delete from campus.result where id <> all($1)", [
+          priorResults.map((row) => row.id),
+        ]);
+        await svc.query(
+          "delete from campus.official_grade where offering_term_id = $1 and student_id = $2",
+          [term.id, ids.student],
+        );
+        for (const row of priorGrades) {
+          await svc.query(
+            `insert into campus.official_grade
+               (id, student_id, offering_term_id, value, observation,
+                suggestion, recorded_by, recorded_at)
+             values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [
+              row.id,
+              row.student_id,
+              row.offering_term_id,
+              row.value,
+              row.observation,
+              row.suggestion,
+              row.recorded_by,
+              row.recorded_at,
+            ],
+          );
+        }
+        await root.query(`update "user" set dni = null where id = $1`, [
+          ids.student,
+        ]);
       },
     );
 

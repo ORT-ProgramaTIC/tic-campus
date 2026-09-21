@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
-import type { Db } from "../db/client.js";
+import type { Db, Tx } from "../db/client.js";
 import { article } from "../db/schema/article.js";
 import { directoryEnrollment, directoryUser } from "../db/schema/directory.js";
 import { offeringScaleLevel, offeringTerm } from "../db/schema/gradebook.js";
@@ -143,7 +143,7 @@ export async function gradebook(
  *  needs the activity list and not only the `result` rows. A second query for
  *  the same rows would be a second thing that can disagree with this one. */
 export async function listActivities(
-  db: Db,
+  db: Db | Tx,
   homeId: string,
 ): Promise<Activity[]> {
   const rows = await db
@@ -190,7 +190,7 @@ export async function listActivities(
  * would be one more thing that can disagree with `listActivities`.
  */
 async function readCovers(
-  db: Db,
+  db: Db | Tx,
   homeId: string,
 ): Promise<Map<string, string[]>> {
   const rows = await db
@@ -228,8 +228,9 @@ async function readCovers(
  *
  * **`id`, `name`, `surname` — not `dni`.** `directory.user` publishes it and
  * campus is a full reader of that view, but nothing on this screen needs it, so
- * it does not go into a payload. F27's import is where matching on a DNI
- * belongs.
+ * it does not go into a payload. F27's CSV is the one place that carries it,
+ * read there on its own (`readExport`), because a spreadsheet is matched back
+ * by DNI.
  */
 export async function roster(
   db: Db,
@@ -461,7 +462,7 @@ export interface EntryInput {
  * a grade, and F38's blank stays one shape: no rows.
  */
 export async function saveResults(
-  db: Db,
+  db: Db | Tx,
   homeId: string,
   entries: EntryInput[],
   recordedBy: number,
@@ -565,7 +566,7 @@ function wrongType(expected: string): ApiError {
 }
 
 async function levelsFor(
-  db: Db,
+  db: Db | Tx,
   activities: Activity[],
 ): Promise<Map<string, { scaleId: string; value: number }>> {
   const scaleIds = [
@@ -599,42 +600,47 @@ async function levelsFor(
  * from the other by passing a different list.
  */
 export async function writableStudents(
-  db: Db,
+  db: Db | Tx,
   homeId: string,
 ): Promise<Set<number>> {
-  const [enrolled, marked, graded] = await Promise.all([
-    db
-      .select({ id: directoryEnrollment.studentId })
-      .from(directoryEnrollment)
-      .innerJoin(
-        offeringHome,
-        and(
-          eq(offeringHome.offeringId, directoryEnrollment.offeringId),
-          eq(offeringHome.id, homeId),
-        ),
+  // One `UNION` and not three queries under `Promise.all`: F27 calls this
+  // inside a transaction, which is one client, and pg refuses a second query
+  // on a client that is still running the first.
+  const rows = await db
+    .select({ id: directoryEnrollment.studentId })
+    .from(directoryEnrollment)
+    .innerJoin(
+      offeringHome,
+      and(
+        eq(offeringHome.offeringId, directoryEnrollment.offeringId),
+        eq(offeringHome.id, homeId),
       ),
-    db
-      .selectDistinct({ id: result.studentId })
-      .from(result)
-      .innerJoin(
-        offeringArticle,
-        and(
-          eq(offeringArticle.id, result.offeringArticleId),
-          eq(offeringArticle.offeringHomeId, homeId),
+    )
+    .union(
+      db
+        .select({ id: result.studentId })
+        .from(result)
+        .innerJoin(
+          offeringArticle,
+          and(
+            eq(offeringArticle.id, result.offeringArticleId),
+            eq(offeringArticle.offeringHomeId, homeId),
+          ),
         ),
-      ),
-    db
-      .selectDistinct({ id: officialGrade.studentId })
-      .from(officialGrade)
-      .innerJoin(
-        offeringTerm,
-        and(
-          eq(offeringTerm.id, officialGrade.offeringTermId),
-          eq(offeringTerm.offeringHomeId, homeId),
+    )
+    .union(
+      db
+        .select({ id: officialGrade.studentId })
+        .from(officialGrade)
+        .innerJoin(
+          offeringTerm,
+          and(
+            eq(offeringTerm.id, officialGrade.offeringTermId),
+            eq(offeringTerm.offeringHomeId, homeId),
+          ),
         ),
-      ),
-  ]);
-  return new Set([...enrolled, ...marked, ...graded].map((row) => row.id));
+    );
+  return new Set(rows.map((row) => row.id));
 }
 
 /* ── What is accepted ────────────────────────────────────────────────────── */

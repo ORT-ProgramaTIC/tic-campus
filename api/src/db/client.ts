@@ -41,6 +41,10 @@ export function createPool(config: Config): Pool {
 
 export type Db = NodePgDatabase<typeof schema>;
 
+/** A transaction on that pool. The write paths that must land together take
+ *  `Db | Tx`, so a caller can put two of them in one transaction (F27). */
+export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
 /**
  * The ORM over that pool, still as `campus_svc`. It is handed the same barrel
  * `drizzle.config.ts` generates migrations from, so what the queries know about

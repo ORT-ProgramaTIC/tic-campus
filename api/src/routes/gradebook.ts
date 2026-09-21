@@ -1,6 +1,7 @@
-import { Router, type Request } from "express";
+import express, { Router, type Request } from "express";
 import type { YearLock } from "../config.js";
 import type { Db } from "../db/client.js";
+import { contentDisposition } from "../library/uploads.js";
 import { isUuid } from "../library/program.js";
 import { ApiError } from "../middleware/errors.js";
 import { actorFrom, capabilitiesFor } from "../offerings/access.js";
@@ -27,6 +28,7 @@ import {
   roster,
   saveResults,
 } from "../offerings/results.js";
+import { importGradebook, readExport } from "../offerings/gradebook-csv.js";
 import {
   answerRequest,
   checkAnswer,
@@ -162,6 +164,85 @@ export function createGradebookRoutes(db: Db, yearLock: YearLock): Router {
       }
     })();
   });
+
+  /**
+   * The grid as a CSV file (F27): activity marks and official grades of the
+   * enrolled, with their DNI. A read, so it still works on a locked year.
+   */
+  router.get("/:offeringId/gradebook/export", (req, res, next) => {
+    void (async () => {
+      try {
+        const { homeId } = await mustManage(req);
+        const offeringId = offeringIdFrom(String(req.params.offeringId));
+        const csv = await readExport(db, homeId, offeringId);
+        res
+          .status(200)
+          .type("text/csv; charset=utf-8")
+          .set(
+            "Content-Disposition",
+            contentDisposition(`boletin-${offeringId}.csv`, "attachment"),
+          )
+          .send(csv);
+      } catch (cause) {
+        next(cause);
+      }
+    })();
+  });
+
+  /**
+   * A CSV back in (F27). `?dryRun=true` answers the diff and writes nothing,
+   * so it is a read and passes the lock; without it the same file is applied.
+   * Nothing is kept between the two calls: what is applied is what was sent.
+   *
+   * **The body is the file itself**, `Content-Type: text/csv`, on its own
+   * parser: one file and no fields is not worth multipart. A client sets the
+   * header by hand, since a browser labels a `.csv` whatever the OS says.
+   *
+   * **All or nothing**: any problem makes applying a `400 import_invalid`
+   * with the diff beside the error, so the screen can show what to fix.
+   */
+  router.post(
+    "/:offeringId/gradebook/import",
+    express.raw({ type: "text/csv", limit: "1mb" }),
+    (req, res, next) => {
+      void (async () => {
+        try {
+          const dryRun = req.query.dryRun === "true";
+          const { homeId } = dryRun
+            ? await mustManage(req)
+            : await mustWrite(req);
+          if (!Buffer.isBuffer(req.body)) {
+            throw new ApiError(
+              415,
+              "unsupported_media_type",
+              "Mandá el archivo como `Content-Type: text/csv`.",
+            );
+          }
+          const outcome = await importGradebook(
+            db,
+            homeId,
+            offeringIdFrom(String(req.params.offeringId)),
+            req.body,
+            dryRun ? null : req.session!.record.userId,
+          );
+          if (dryRun || outcome.applied) {
+            res.status(200).json(outcome);
+            return;
+          }
+          res.status(400).json({
+            error: {
+              code: "import_invalid",
+              message:
+                "El archivo tiene problemas y no se aplicó nada. Corregilos y volvé a subirlo.",
+            },
+            ...outcome,
+          });
+        } catch (cause) {
+          next(cause);
+        }
+      })();
+    },
+  );
 
   /**
    * Groups, terms and scales, as one list each (F39).

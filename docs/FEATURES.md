@@ -826,10 +826,49 @@ observation, suggestion)` plus `recorded_by`/`recorded_at`, unique on the first 
 
 ### F27 · CSV / XLSX import and export
 
-- [x] **Status:** decided
+- [x] **Status:** built (slice 16), CSV only
 - **Decision:** Export an offering's gradebook, and import one back to bulk-set results.
   Import shows a diff before applying and matches students by directory id or DNI. It is the
   escape hatch for teachers who still want to work in a spreadsheet.
+
+  **Built 2026-09-21 (slice 16).** `GET /api/homes/:oferta/gradebook/export` and `POST
+…/gradebook/import[?dryRun=true]`, in `api/src/offerings/gradebook-csv.ts`. **CSV only**:
+  XLSX waits until a teacher asks, and no dependency was added. Decided with the user
+  before the slice: the diff is a dry run of the same call and nothing is stored between
+  the two; an empty cell leaves the mark alone, so an import never clears (a clear deletes
+  history, F38/F41); the export has activity marks and official grades of the enrolled, and
+  no computed marks (F20); the id wins over the DNI, and names are ignored. Settled by
+  building it:
+
+  - **The file is what es-AR Excel opens on a double click**: UTF-8 with a BOM, `;`,
+    decimal comma, CRLF. The import also takes `,` (the header line decides), a decimal
+    point, no BOM, and Latin-1 when the bytes are not UTF-8. Done is `hecho`/`no hecho`, a
+    scale level is its name, both case-insensitive. A DNI may carry Excel's dots.
+  - **Headers are matched on the brackets.** An activity is `Title [slug]`, so a renamed
+    title still imports. An official grade is `1er trimestre [nota oficial]`: the tag has a
+    space, so it can never be a slug, and the term is named by its name (unique, F39). A
+    renamed term makes an old file's column `unknown_column`, which says to export again.
+  - **The diff is the write set.** A cell that already says what the file says is counted
+    in `unchanged` and never written, because `result` is append-only (F41) and a re-save
+    would be a history row saying somebody re-marked the class. A changed mark keeps its
+    `feedback`, and a changed grade keeps its observation and suggestion. None of those are in
+    the file.
+  - **All or nothing.** Every problem is listed (`unknown_student`, `not_writable`,
+    `duplicate_student`, `no_student_key`, `unknown_column`, `duplicate_column`,
+    `bad_value`, `bad_file`), and applying with any of them present is a `400
+import_invalid` that carries the same diff next to the error. A clean file goes through
+    `saveResults` and `saveOfficialGrades` in **one transaction**. Their `db` is now
+    `Db | Tx`, which is still one write path each and not a third. `writableStudents`
+    became one `UNION` for it, since a transaction is one client and pg refuses concurrent
+    queries on one.
+  - **The body is the raw file**, `Content-Type: text/csv`, on its own `express.raw` at
+    1 MB. One file and no fields is not worth multipart, and anything else is a `415`. A
+    client sets the header by hand, because browsers label a `.csv` however the OS does.
+  - **A text cell that starts like a formula** (`= + - @`) is exported with a `'`. Names and
+    titles are ignored on import, so the round trip never sees the prefix.
+  - The dry run and the export are reads and pass F35's lock; applying is `mustWrite`.
+  - **This is the first payload that carries a DNI**, read on its own and not through
+    `roster`.
 
 ### F28 · Results API
 

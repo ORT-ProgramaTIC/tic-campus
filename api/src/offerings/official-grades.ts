@@ -1,5 +1,5 @@
 import { and, eq, inArray, or, sql } from "drizzle-orm";
-import type { Db } from "../db/client.js";
+import type { Db, Tx } from "../db/client.js";
 import { offeringTerm } from "../db/schema/gradebook.js";
 import { officialGrade } from "../db/schema/official-grade.js";
 import { isUuid } from "../library/program.js";
@@ -130,7 +130,7 @@ export interface GradeInput {
  * Then **one** upsert and **one** delete, whatever the size of the batch.
  */
 export async function saveOfficialGrades(
-  db: Db,
+  db: Db | Tx,
   homeId: string,
   entries: GradeInput[],
   recordedBy: number,
