@@ -882,7 +882,22 @@ import_invalid` that carries the same diff next to the error. A clean file goes 
   waiting. When it is built, the defaults are: tic-auth client credentials with a scope such
   as `campus:results:write`, results landing as **drafts** a teacher publishes (F24),
   and activities named by their opaque campus id.
-- **To settle (when un-deferred):** The first real caller, and what it needs.
+- **Settled (slice 18, re-deferred 2026-09-21):** still no caller. A generic scripted import
+  is F27's job over a teacher session, so nothing was built. When it is:
+  - **Recorded by:** the client acts _for_ a teacher named in the request, who must pass
+    `manageOffering`. `recorded_by` stays a real `directory.user` (F41): no nullable column,
+    no service user. Do not rebuild `SERVICE_USER`.
+  - **Reach:** exactly the named teacher's offerings. No per-client table.
+  - **Scope:** results **and** official grades, as two scopes (`campus:results:write`,
+    `campus:grades:write`), through the single writers `saveResults` and
+    `saveOfficialGrades`, under F35's lock. Check that tic-auth declares both scopes.
+  - **Drafts:** probably free. Visibility is `offering_article.results_published_at` (F24), so
+    "drafts" means the machine cannot publish. Confirm there is no per-result state to add.
+  - **Tokens:** a client-credentials token's `sub` is the client id (a string) and it has no
+    `roles`. Give it its own verifier entry point and middleware, not a branch in the person
+    path, and refuse a token on the wrong path in both directions.
+- **To settle (when un-deferred):** The first real caller, and its payload (DNI or user id
+  for students).
 
 ---
 
