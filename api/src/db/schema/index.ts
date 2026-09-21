@@ -10,6 +10,7 @@
 // `public."user"` in a campus migration.
 export * from "./article.js";
 export * from "./gradebook.js";
+export * from "./notification-read.js";
 export * from "./offering-article.js";
 export * from "./offering-home.js";
 export * from "./official-grade.js";

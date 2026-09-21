@@ -59,6 +59,7 @@ import {
   listRequests,
   myRevisions,
 } from "../dist/offerings/revisions.js";
+import { markRead, myNotifications } from "../dist/offerings/notifications.js";
 import {
   computeBothViews,
   computeMarks,
@@ -2284,6 +2285,174 @@ test(
         assert.equal((await activeHome(db, ids.pastYear)).unlockedAt, null);
         // Not activated is nothing to unlock.
         assert.equal(await setUnlocked(db, ids.optional, true), null);
+      },
+    );
+
+    // --- slice 15: the bell (F30) -------------------------------------------
+    //
+    // Derived on read, so this block mostly moves dates on `tp-sql` and asks the
+    // bell. It writes those dates with SQL rather than `useArticle`, which
+    // would need the whole row spelled out, and puts every one of them back.
+    // By here `ids.student` has a 9 on it and `ids.teacher`, un-enrolled since
+    // slice 7, still has an 8.
+
+    await t.test(
+      "the bell derives what happened, and remembers what was read",
+      async () => {
+        const home = await activeHome(db, ids.current);
+        const tp = (await listActivities(db, home.homeId)).find(
+          (a) => a.slug === "tp-sql",
+        );
+        const {
+          rows: [was],
+        } = await svc.query(
+          `select published_at, results_published_at, notify
+             from campus.offering_article where id = $1`,
+          [tp.id],
+        );
+        const set = (column, value) =>
+          svc.query(
+            `update campus.offering_article set ${column} = ${value} where id = $1`,
+            [tp.id],
+          );
+        // A second ahead, because the dates below come from Postgres's clock in
+        // microseconds and `now` is JavaScript's in milliseconds.
+        const bell = async (userId, now = new Date(Date.now() + 1000)) =>
+          myNotifications(db, userId, now);
+        const find = (b, kind, target) =>
+          b.items.find((i) => i.kind === kind && i.target === target);
+
+        // A publish dated forward is not news yet, and is on the day it lands.
+        await set("results_published_at", "now() + interval '1 day'");
+        assert.equal(
+          find(await bell(ids.student), "result_published", tp.id),
+          undefined,
+          "a date that has not arrived has not arrived",
+        );
+        const later = await bell(
+          ids.student,
+          new Date(Date.now() + 2 * 86_400_000),
+        );
+        assert.equal(
+          find(later, "result_published", tp.id)?.read,
+          false,
+          "and nothing had to run for it to arrive",
+        );
+
+        await set("results_published_at", "now() - interval '1 hour'");
+        const first = await bell(ids.student);
+        const item = find(first, "result_published", tp.id);
+        assert.equal(item.read, false);
+        assert.equal(item.offeringId, ids.current);
+        assert.equal(item.slug, "tp-sql");
+        assert.ok(first.unread >= 1);
+        assert.equal(
+          find(await bell(ids.teacher), "result_published", tp.id),
+          undefined,
+          "somebody who left the course carries a mark and gets no item",
+        );
+        assert.deepEqual(
+          (await bell(ids.orphanStudent)).items,
+          [],
+          "nor does somebody with no mark and no class",
+        );
+
+        // INSERT, then UPDATE: marking twice moves the receipt, never mints one.
+        const receipt = { kind: "result_published", target: tp.id };
+        await markRead(db, ids.student, [receipt]);
+        await markRead(db, ids.student, [receipt]);
+        const read = await bell(ids.student);
+        assert.equal(find(read, "result_published", tp.id).read, true);
+        assert.equal(read.unread, first.unread - 1);
+        assert.equal(
+          (
+            await svc.query(
+              "select count(*)::int as n from campus.notification_read",
+            )
+          ).rows[0].n,
+          1,
+        );
+
+        // Moved later, it is news again: a receipt only counts if it is newer.
+        await set("results_published_at", "now()");
+        assert.equal(
+          find(await bell(ids.student), "result_published", tp.id).read,
+          false,
+        );
+
+        // The teacher asked for the class to be told about the statement.
+        await set("published_at", "now() - interval '1 hour'");
+        assert.equal(
+          find(await bell(ids.student), "article_published", tp.id),
+          undefined,
+          "off by default",
+        );
+        await set("notify", "true");
+        assert.equal(
+          find(await bell(ids.student), "article_published", tp.id)?.read,
+          false,
+        );
+
+        // A revision reaches whose mark it is and whoever filed it (F29's group
+        // filing) — each only while enrolled. Written by hand because the seed
+        // has one enrolled student and filing needs two.
+        const {
+          rows: [mine],
+        } = await svc.query(
+          `insert into campus.revision_request
+             (offering_article_id, student_id, requested_by, reason,
+              answer, answered_at, answered_by)
+           values ($1, $2, $2, 'x', 'Queda.', now(), $3) returning id`,
+          [tp.id, ids.student, ids.admin],
+        );
+        const {
+          rows: [partners],
+        } = await svc.query(
+          `insert into campus.revision_request
+             (offering_article_id, student_id, requested_by, reason,
+              answer, answered_at, answered_by)
+           values ($1, $2, $3, 'x', 'Queda.', now(), $4) returning id`,
+          [tp.id, ids.teacher, ids.student, ids.admin],
+        );
+        const withAnswers = await bell(ids.student);
+        assert.ok(find(withAnswers, "revision_answered", mine.id));
+        assert.ok(
+          find(withAnswers, "revision_answered", partners.id),
+          "the filer hears about the partner's answer",
+        );
+        assert.equal(
+          find(await bell(ids.teacher), "revision_answered", partners.id),
+          undefined,
+          "the partner has left the class, so the partner does not",
+        );
+
+        // DELETE: the sweep takes the caller's receipts older than the window.
+        await svc.query(
+          `insert into campus.notification_read (user_id, kind, target, read_at)
+           values ($1, 'result_published', $2, now() - interval '40 days')`,
+          [ids.student, randomUUID()],
+        );
+        await markRead(db, ids.student, [
+          { kind: "revision_answered", target: mine.id },
+        ]);
+        assert.equal(
+          (
+            await svc.query(
+              "select count(*)::int as n from campus.notification_read where read_at < now() - interval '30 days'",
+            )
+          ).rows[0].n,
+          0,
+        );
+
+        // Put back what the subtests after this one found.
+        await svc.query("delete from campus.revision_request");
+        await svc.query("delete from campus.notification_read");
+        await svc.query(
+          `update campus.offering_article
+              set published_at = $2, results_published_at = $3, notify = $4
+            where id = $1`,
+          [tp.id, was.published_at, was.results_published_at, was.notify],
+        );
       },
     );
 

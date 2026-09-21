@@ -59,7 +59,8 @@ export function createHomeContentRoutes(db: Db): Router {
    * Idempotent on `(home, article)` like activation, so a teacher who saves the
    * same panel twice has not made a mistake. `publishedAt` null keeps it
    * staff-only, which is how an article written a week early stays unseen;
-   * `restricted` is F4's "enrolled students and staff only"; and
+   * `restricted` is F4's "enrolled students and staff only"; `notify` is
+   * F30's "tell the class when it appears", off unless sent; and
    * `resultsPublishedAt` is F24's separate answer for the marks.
    *
    * **A whole row goes in.** Everything absent takes its default, which for
@@ -82,6 +83,7 @@ export function createHomeContentRoutes(db: Db): Router {
             position: positionFrom(body.position),
             publishedAt: dateFrom(body.publishedAt, "publishedAt"),
             restricted: body.restricted === true,
+            notify: body.notify === true,
             offeringGroupId: idFrom(body.offeringGroupId, "offeringGroupId"),
             offeringTermId: idFrom(body.offeringTermId, "offeringTermId"),
             valueType: valueTypeFrom(body.valueType),

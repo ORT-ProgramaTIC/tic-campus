@@ -48,6 +48,8 @@ export interface HomeArticle {
   position: number;
   publishedAt: Date | null;
   restricted: boolean;
+  /** Whether it tells the class when it appears (F30). */
+  notify: boolean;
   /** False when only staff can see it here — unpublished, or restricted. */
   public: boolean;
 }
@@ -141,6 +143,7 @@ export async function homeContent(
       position: use.position,
       publishedAt: use.publishedAt,
       restricted: use.restricted,
+      notify: use.notify,
       public: mayRead(use, NONE),
     }));
   return {
@@ -202,6 +205,7 @@ export async function readableArticle(
     position: use.position,
     publishedAt: use.publishedAt,
     restricted: use.restricted,
+    notify: use.notify,
     public: mayRead(use, NONE),
     body: use.body,
   };
@@ -212,6 +216,8 @@ export interface UseInput {
   position: number;
   publishedAt: Date | null;
   restricted: boolean;
+  /** F30: tell the enrolled class once `publishedAt` arrives. */
+  notify: boolean;
   /** F18's grading metadata. All null together is a theory note; `valueType`
    *  not null is what makes this use an activity. */
   offeringGroupId: string | null;
@@ -714,5 +720,6 @@ const USE = {
   position: offeringArticle.position,
   publishedAt: offeringArticle.publishedAt,
   restricted: offeringArticle.restricted,
+  notify: offeringArticle.notify,
   published: sql<boolean>`${article.publishedVersionId} is not null`,
 };

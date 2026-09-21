@@ -18,6 +18,7 @@ import { createAuthRoutes, createMeRoute } from "./routes/auth.js";
 import { createGradebookRoutes } from "./routes/gradebook.js";
 import { createHomeContentRoutes } from "./routes/home-content.js";
 import { createLibraryRoutes } from "./routes/library.js";
+import { createNotificationRoutes } from "./routes/notifications.js";
 import { createOfferingRoutes } from "./routes/offerings.js";
 import { createUploadRoutes } from "./routes/uploads.js";
 
@@ -210,6 +211,8 @@ app.use(
   createHomeContentRoutes(db),
   createGradebookRoutes(db, config.yearLock),
 );
+// The bell (F30). Always the caller's own, so the session is the whole gate.
+app.use("/api/notifications", guard, createNotificationRoutes(db));
 // The bytes of an upload (F9). Public, and with no session middleware at all:
 // every image in every article comes through here.
 app.use("/api/uploads", createUploadRoutes(db, config.uploadsDir));

@@ -81,6 +81,16 @@ export const offeringArticle = campus.table(
      * constraint, and the migration is one `USING` expression.
      */
     restricted: boolean("restricted").notNull().default(false),
+    /**
+     * F30's "new article": whether this use tells the class when it appears.
+     * The teacher's per use, because a TP statement is news and a theory note
+     * filed under unit 3 mostly is not. **Off by default**, so an existing use
+     * and a client that has never heard of the field notify nobody.
+     *
+     * It fires at `publishedAt`, not at the save: a statement dated for Monday
+     * reaches the bell on Monday, because the bell derives it on read.
+     */
+    notify: boolean("notify").notNull().default(false),
     /** F20's bucket — `tps`, `clase`. Null is a graded activity the formula
      *  ignores, which is a legitimate thing to be and not a half-filled row. */
     offeringGroupId: uuid("offering_group_id").references(
