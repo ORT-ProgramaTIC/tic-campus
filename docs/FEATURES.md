@@ -472,7 +472,7 @@ jsonb`, `unit_order uuid[]`, `hidden_units uuid[]`, written whole by `PUT
 
 ### F16 · Calendar
 
-- [x] **Status:** decided
+- [ ] **Status:** deferred until after launch
 - **Decision:** Upcoming activity due dates (from F18) plus teacher-added events (exams,
   field trips).
   **School-wide events (holidays, school events) belong to the directory**, not campus.
@@ -483,6 +483,10 @@ jsonb`, `unit_order uuid[]`, `hidden_units uuid[]`, written whole by `PUT
   **Dependency:** until that view exists, calendars show only offering events.
   **Amended 2026-09-21 (slice 13):** the calendar is a campus-wide view, not one of an
   offering home's sections (F14).
+  **Deferred 2026-09-21, after slice 15:** not built for launch. When it is un-deferred it
+  becomes the only reader of `offering_article.due_at` (F25), and F21's optional term dates
+  arrive with it. Still to settle then: the read shape (campus-wide, per offering, or both),
+  the teacher-event table (not in F37), and Buenos Aires time for all-day events.
 
 ### F17 · No special page types
 
