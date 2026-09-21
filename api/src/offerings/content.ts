@@ -1,4 +1,5 @@
 import { and, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import type { YearLock } from "../config.js";
 import type { Db } from "../db/client.js";
 import { article, articleVersion } from "../db/schema/article.js";
 import {
@@ -595,13 +596,28 @@ export async function removeUse(
   return removed.length > 0;
 }
 
+/** An activated home, with what F35's lock is decided from. */
+export interface ActiveHome {
+  homeId: string;
+  subjectId: number;
+  /** The offering's school year, from the directory. */
+  year: number;
+  /** An admin reopened this offering past its year's lock (F35). */
+  unlockedAt: Date | null;
+}
+
 /** The offering's home row and subject, or nothing if it has no presence. */
 export async function activeHome(
   db: Db,
   offeringId: number,
-): Promise<{ homeId: string; subjectId: number } | null> {
+): Promise<ActiveHome | null> {
   const [home] = await db
-    .select({ homeId: offeringHome.id, subjectId: directoryOffering.subjectId })
+    .select({
+      homeId: offeringHome.id,
+      subjectId: directoryOffering.subjectId,
+      year: directoryOffering.year,
+      unlockedAt: offeringHome.unlockedAt,
+    })
     .from(offeringHome)
     .innerJoin(
       directoryOffering,
@@ -634,7 +650,7 @@ export async function manageableHome(
   db: Db,
   offeringId: number,
   actor: Actor,
-): Promise<{ homeId: string; subjectId: number }> {
+): Promise<ActiveHome> {
   const home = await activeHome(db, offeringId);
   // F34: an offering campus has not activated has no presence at all, so this
   // is a 404 and not an empty 200. Checking before mutating is also what keeps
@@ -647,6 +663,48 @@ export async function manageableHome(
     throw new ApiError(403, "forbidden", "Esto lo hace quien da esta materia.");
   }
   return home;
+}
+
+/**
+ * Whether a year's marks are closed (F35): from 00:00 in Buenos Aires on the
+ * day after `yearLock` of the offering's year, unless an admin reopened this
+ * one offering.
+ *
+ * **From a date, not from `is_current`.** Which year is current is the
+ * directory's word and flips when the office rolls the year — which may be
+ * March, and a lock that waits for it leaves last year writable all summer.
+ * The date is F42's constant and is the same for every offering of a year.
+ */
+export function isLocked(
+  home: Pick<ActiveHome, "year" | "unlockedAt">,
+  yearLock: YearLock,
+  now: Date = new Date(),
+): boolean {
+  if (home.unlockedAt) return false;
+  // ponytail: fixed UTC−3 — Argentina has had no DST since 2009. A zone
+  // database is the upgrade if that ever changes.
+  const closes = Date.UTC(home.year, yearLock.month - 1, yearLock.day + 1, 3);
+  return now.getTime() >= closes;
+}
+
+/**
+ * The lock as a refusal, for the writes that change a mark: results, official
+ * grades, the gradebook's setup and both halves of a revision. **Marks only**
+ * — the home, its articles and the library stay editable, and every read
+ * stays open. A `409` and not a `403`: nobody lacks a permission, the year is
+ * over, and an admin's unlock is the way through.
+ */
+export function assertUnlocked(
+  home: Pick<ActiveHome, "year" | "unlockedAt">,
+  yearLock: YearLock,
+): void {
+  if (isLocked(home, yearLock)) {
+    throw new ApiError(
+      409,
+      "locked",
+      "Este año ya cerró. Para corregir una nota, pedíselo a un admin.",
+    );
+  }
 }
 
 const USE = {

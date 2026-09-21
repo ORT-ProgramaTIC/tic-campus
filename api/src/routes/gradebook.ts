@@ -1,9 +1,15 @@
 import { Router, type Request } from "express";
+import type { YearLock } from "../config.js";
 import type { Db } from "../db/client.js";
 import { isUuid } from "../library/program.js";
 import { ApiError } from "../middleware/errors.js";
 import { actorFrom, capabilitiesFor } from "../offerings/access.js";
-import { activeHome, manageableHome } from "../offerings/content.js";
+import {
+  activeHome,
+  assertUnlocked,
+  isLocked,
+  manageableHome,
+} from "../offerings/content.js";
 import {
   checkSetup,
   deleteGroup,
@@ -85,7 +91,7 @@ function uuidFrom(raw: string): string {
   return raw;
 }
 
-export function createGradebookRoutes(db: Db): Router {
+export function createGradebookRoutes(db: Db, yearLock: YearLock): Router {
   const router = Router();
 
   function mustManage(req: Request) {
@@ -95,6 +101,14 @@ export function createGradebookRoutes(db: Db): Router {
       offeringIdFrom(String(req.params.offeringId)),
       actorFrom(record.userId, record.claims),
     );
+  }
+
+  /** `mustManage`, for a write that changes a mark — refused once the year
+   *  has locked (F35). */
+  async function mustWrite(req: Request) {
+    const home = await mustManage(req);
+    assertUnlocked(home, yearLock);
+    return home;
   }
 
   /**
@@ -114,7 +128,8 @@ export function createGradebookRoutes(db: Db): Router {
   router.get("/:offeringId/gradebook", (req, res, next) => {
     void (async () => {
       try {
-        const { homeId } = await mustManage(req);
+        const home = await mustManage(req);
+        const { homeId } = home;
         const offeringId = offeringIdFrom(String(req.params.offeringId));
         const [setup, grid, officialGrades] = await Promise.all([
           readSetup(db, homeId),
@@ -123,6 +138,9 @@ export function createGradebookRoutes(db: Db): Router {
         ]);
         res.status(200).json({
           ...setup,
+          // F35: the grid still opens after the year closes, read-only, and
+          // says so rather than letting a teacher type into a save that 409s.
+          locked: isLocked(home, yearLock),
           scalePresets: SCALE_PRESETS,
           ...grid,
           // The *other* number (F22): typed, not computed, and it rides in this
@@ -156,7 +174,7 @@ export function createGradebookRoutes(db: Db): Router {
   router.put("/:offeringId/gradebook", (req, res, next) => {
     void (async () => {
       try {
-        const { homeId } = await mustManage(req);
+        const { homeId } = await mustWrite(req);
         res
           .status(200)
           .json(await writeSetup(db, homeId, checkSetup(req.body)));
@@ -169,7 +187,7 @@ export function createGradebookRoutes(db: Db): Router {
   router.delete("/:offeringId/gradebook/groups/:rowId", (req, res, next) => {
     void (async () => {
       try {
-        const { homeId } = await mustManage(req);
+        const { homeId } = await mustWrite(req);
         await deleteGroup(db, homeId, uuidFrom(req.params.rowId));
         res.status(200).json({ deleted: true });
       } catch (cause) {
@@ -181,7 +199,7 @@ export function createGradebookRoutes(db: Db): Router {
   router.delete("/:offeringId/gradebook/terms/:rowId", (req, res, next) => {
     void (async () => {
       try {
-        const { homeId } = await mustManage(req);
+        const { homeId } = await mustWrite(req);
         await deleteTerm(db, homeId, uuidFrom(req.params.rowId));
         res.status(200).json({ deleted: true });
       } catch (cause) {
@@ -194,7 +212,7 @@ export function createGradebookRoutes(db: Db): Router {
   router.delete("/:offeringId/gradebook/scales/:rowId", (req, res, next) => {
     void (async () => {
       try {
-        const { homeId } = await mustManage(req);
+        const { homeId } = await mustWrite(req);
         await deleteScale(db, homeId, uuidFrom(req.params.rowId));
         res.status(200).json({ deleted: true });
       } catch (cause) {
@@ -214,7 +232,7 @@ export function createGradebookRoutes(db: Db): Router {
   router.put("/:offeringId/results", (req, res, next) => {
     void (async () => {
       try {
-        const { homeId } = await mustManage(req);
+        const { homeId } = await mustWrite(req);
         const { record } = req.session!;
         await saveResults(db, homeId, checkEntries(req.body), record.userId);
         res.status(200).json({ saved: true });
@@ -238,7 +256,7 @@ export function createGradebookRoutes(db: Db): Router {
   router.put("/:offeringId/official-grades", (req, res, next) => {
     void (async () => {
       try {
-        const { homeId } = await mustManage(req);
+        const { homeId } = await mustWrite(req);
         const { record } = req.session!;
         await saveOfficialGrades(
           db,
@@ -340,6 +358,8 @@ export function createGradebookRoutes(db: Db): Router {
           official,
           revisions,
           classmates: classmates.filter((student) => student.enrolled),
+          // Whether a revision can still be asked for (F35).
+          locked: isLocked(home, yearLock),
         });
       } catch (cause) {
         next(cause);
@@ -383,6 +403,7 @@ export function createGradebookRoutes(db: Db): Router {
             "Esto lo pide quien cursa esta materia.",
           );
         }
+        assertUnlocked(home, yearLock);
         await fileRequests(
           db,
           offeringId,
@@ -423,7 +444,7 @@ export function createGradebookRoutes(db: Db): Router {
   router.post("/:offeringId/revisions/:rowId/answer", (req, res, next) => {
     void (async () => {
       try {
-        const { homeId } = await mustManage(req);
+        const { homeId } = await mustWrite(req);
         const { record } = req.session!;
         await answerRequest(
           db,

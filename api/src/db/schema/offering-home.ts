@@ -44,8 +44,11 @@ export interface HomeLink {
  * `revision_request` hang off that. A `DELETE` behind an idempotent admin button
  * would take a teacher's work with it, and a cascade would eventually take
  * students' marks. Archiving is also why the primary key is a uuid of its own
- * even though `offeringId` is already unique, and what the F35 year lock will
- * point its rows at.
+ * even though `offeringId` is already unique.
+ *
+ * **F35's year lock is not a column** — it is computed from the offering's
+ * year and F42's date, so a year locks without anybody writing a row.
+ * `unlockedAt` is the one exception an admin makes by hand.
  */
 export const offeringHome = campus.table(
   "offering_home",
@@ -109,6 +112,10 @@ export const offeringHome = campus.table(
     unitOrder: uuid("unit_order").array().notNull().default([]),
     /** Library units this offering hides from its students. */
     hiddenUnits: uuid("hidden_units").array().notNull().default([]),
+    /** An admin reopened this offering's marks past its year's lock (F35),
+     *  for a late fix. Null is "the date decides"; relocking clears it. A
+     *  timestamp rather than a boolean, for the reason `archivedAt` is one. */
+    unlockedAt: timestamp("unlocked_at", { withTimezone: true }),
   },
   // Total, never partial: `ON CONFLICT (offering_id)` needs this as its target,
   // and a `WHERE archived_at IS NULL` index is not one.

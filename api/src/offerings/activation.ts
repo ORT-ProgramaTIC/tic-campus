@@ -66,3 +66,43 @@ export async function deactivate(db: Db, offeringId: number): Promise<boolean> {
     .returning({ id: offeringHome.id });
   return archived.length > 0;
 }
+
+/**
+ * An admin reopens one offering's marks past its year's lock, for a late fix
+ * (F35) — or closes them again. Idempotent like activation, and for the same
+ * reason. `null` when the offering is not active: there is nothing to unlock,
+ * and the route says so as a 404.
+ *
+ * Re-unlocking keeps the first `unlockedAt`, which is when the exception
+ * started — the `isNull` in the `WHERE` is `deactivate`'s, for `deactivate`'s
+ * reason.
+ */
+export async function setUnlocked(
+  db: Db,
+  offeringId: number,
+  unlocked: boolean,
+): Promise<boolean | null> {
+  const active = and(
+    eq(offeringHome.offeringId, offeringId),
+    isNull(offeringHome.archivedAt),
+  );
+  const changed = await db
+    .update(offeringHome)
+    .set({ unlockedAt: unlocked ? sql`now()` : null })
+    .where(
+      and(
+        active,
+        unlocked
+          ? isNull(offeringHome.unlockedAt)
+          : isNotNull(offeringHome.unlockedAt),
+      ),
+    )
+    .returning({ id: offeringHome.id });
+  if (changed.length > 0) return true;
+  const [home] = await db
+    .select({ id: offeringHome.id })
+    .from(offeringHome)
+    .where(active)
+    .limit(1);
+  return home ? false : null;
+}

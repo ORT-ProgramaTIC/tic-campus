@@ -208,7 +208,7 @@ app.use(
   "/api/homes",
   guard,
   createHomeContentRoutes(db),
-  createGradebookRoutes(db),
+  createGradebookRoutes(db, config.yearLock),
 );
 // The bytes of an upload (F9). Public, and with no session middleware at all:
 // every image in every article comes through here.

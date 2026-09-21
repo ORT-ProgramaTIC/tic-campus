@@ -4,7 +4,7 @@ import type { Db } from "../db/client.js";
 import { directoryOffering } from "../db/schema/directory.js";
 import { ApiError } from "../middleware/errors.js";
 import { isAdmin } from "../offerings/access.js";
-import { activate, deactivate } from "../offerings/activation.js";
+import { activate, deactivate, setUnlocked } from "../offerings/activation.js";
 import { listForAdmin } from "../offerings/catalog.js";
 
 /**
@@ -122,6 +122,36 @@ export function createAdminOfferingRoutes(
       }
     })();
   });
+
+  /**
+   * F35's exception: this one offering's marks reopen past its year's lock, for
+   * a late fix, until the `DELETE` closes them again. A flag and not a date —
+   * the date is F42's and the same for the whole year; what an admin decides
+   * here is only "this one, now".
+   */
+  for (const [method, unlocked] of [
+    ["post", true],
+    ["delete", false],
+  ] as const) {
+    router[method]("/:offeringId/unlock", (req, res, next) => {
+      void (async () => {
+        try {
+          const offeringId = offeringIdFrom(req.params.offeringId);
+          const changed = await setUnlocked(db, offeringId, unlocked);
+          if (changed === null) {
+            throw new ApiError(
+              404,
+              "not_found",
+              "Esa materia no está activada.",
+            );
+          }
+          res.status(200).json({ offeringId, unlocked, changed });
+        } catch (cause) {
+          next(cause);
+        }
+      })();
+    });
+  }
 
   return router;
 }

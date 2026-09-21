@@ -1,0 +1,1 @@
+ALTER TABLE "campus"."offering_home" ADD COLUMN "unlocked_at" timestamp with time zone;

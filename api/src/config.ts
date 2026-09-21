@@ -33,6 +33,15 @@ export interface Config {
    * refuses to return without it.
    */
   auth: AuthConfig | undefined;
+  /** The day a school year's gradebooks lock (F35, F42): `YEAR_LOCK` as
+   *  `MM-DD`, 31 December by default. */
+  yearLock: YearLock;
+}
+
+/** A month and day, 1-based: `{ month: 12, day: 31 }`. */
+export interface YearLock {
+  month: number;
+  day: number;
 }
 
 /**
@@ -116,6 +125,29 @@ function secretFrom(env: NodeJS.ProcessEnv, key: string): string | undefined {
   }
   if (!value) throw new Error(`${path} está vacío`);
   return value;
+}
+
+/**
+ * A constant and not a settings row (F42): it moves once a year at most, and
+ * the box that needs a different one says so in `.env`. A date that does not
+ * exist — `02-30` — fails here, not on the first gradebook save of January.
+ */
+function yearLock(env: NodeJS.ProcessEnv): YearLock {
+  const raw = withDefault(env, "YEAR_LOCK", "12-31");
+  const match = /^(\d{2})-(\d{2})$/.exec(raw);
+  const month = Number(match?.[1]);
+  const day = Number(match?.[2]);
+  // 2001 is not a leap year, so `02-29` is refused rather than locking on
+  // 1 March three years in four.
+  const probe = new Date(Date.UTC(2001, month - 1, day));
+  if (
+    !match ||
+    probe.getUTCMonth() !== month - 1 ||
+    probe.getUTCDate() !== day
+  ) {
+    throw new Error("YEAR_LOCK tiene que ser una fecha MM-DD, como 12-31");
+  }
+  return { month, day };
 }
 
 function loadAuth(
@@ -202,5 +234,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         : join(tmpdir(), "tic-campus-uploads"),
     ),
     auth: loadAuth(env, production),
+    yearLock: yearLock(env),
   };
 }

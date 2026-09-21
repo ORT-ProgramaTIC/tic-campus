@@ -44,3 +44,21 @@ test("an unreadable or empty password file fails, naming the path", () => {
 test("no password file is allowed", () => {
   assert.equal(loadConfig({ DATABASE_URL: URL_ }).databasePassword, undefined);
 });
+
+test("YEAR_LOCK defaults to 31 December, and a date that does not exist fails", () => {
+  assert.deepEqual(loadConfig({ DATABASE_URL: URL_ }).yearLock, {
+    month: 12,
+    day: 31,
+  });
+  assert.deepEqual(
+    loadConfig({ DATABASE_URL: URL_, YEAR_LOCK: "02-28" }).yearLock,
+    { month: 2, day: 28 },
+  );
+  for (const bad of ["02-30", "02-29", "13-01", "00-10", "1231", "12-1"]) {
+    assert.throws(
+      () => loadConfig({ DATABASE_URL: URL_, YEAR_LOCK: bad }),
+      /YEAR_LOCK/,
+      bad,
+    );
+  }
+});

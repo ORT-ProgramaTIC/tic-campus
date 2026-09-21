@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mayRead } from "../dist/offerings/content.js";
+import { isLocked, mayRead } from "../dist/offerings/content.js";
 import { arrangeUnits, checkHome } from "../dist/offerings/home.js";
 
 // F4's visibility rule on its own — the half that is a decision rather than a
@@ -170,4 +170,36 @@ test("the lists have ceilings", () => {
   assert.throws(() => checkHome(home({ hiddenUnits: ["not-a-uuid"] })), {
     status: 400,
   });
+});
+
+// F35: a year locks at 00:00 in Buenos Aires on the day after F42's date.
+test("isLocked turns at midnight Buenos Aires, and an unlock overrides it", () => {
+  const DEC_31 = { month: 12, day: 31 };
+  const home = { year: 2026, unlockedAt: null };
+  assert.equal(
+    isLocked(home, DEC_31, new Date("2026-12-31T23:59:59-03:00")),
+    false,
+  );
+  assert.equal(
+    isLocked(home, DEC_31, new Date("2027-01-01T00:00:00-03:00")),
+    true,
+  );
+  assert.equal(
+    isLocked(
+      { year: 2026, unlockedAt: new Date("2027-02-01T12:00:00Z") },
+      DEC_31,
+      new Date("2027-03-01T00:00:00-03:00"),
+    ),
+    false,
+  );
+  // A box that closes earlier says so in YEAR_LOCK.
+  const DEC_15 = { month: 12, day: 15 };
+  assert.equal(
+    isLocked(home, DEC_15, new Date("2026-12-16T00:00:00-03:00")),
+    true,
+  );
+  assert.equal(
+    isLocked(home, DEC_15, new Date("2026-12-15T12:00:00-03:00")),
+    false,
+  );
 });

@@ -257,7 +257,15 @@ async function main() {
     "value",
     "valueType",
   ];
-  const MINE = ["classmates", "computed", "official", "results", "revisions"];
+  // `locked` since slice 14 (F35).
+  const MINE = [
+    "classmates",
+    "computed",
+    "locked",
+    "official",
+    "results",
+    "revisions",
+  ];
 
   const check = async (expected, marker) => {
     const g = await grid();

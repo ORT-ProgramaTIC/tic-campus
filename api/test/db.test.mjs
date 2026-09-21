@@ -7,7 +7,11 @@ import test from "node:test";
 import { Pool } from "pg";
 import { createDb } from "../dist/db/client.js";
 import { runMigrations } from "../dist/db/migrate.js";
-import { activate, deactivate } from "../dist/offerings/activation.js";
+import {
+  activate,
+  deactivate,
+  setUnlocked,
+} from "../dist/offerings/activation.js";
 import { capabilitiesFor, NONE } from "../dist/offerings/access.js";
 import {
   activeHome,
@@ -2253,6 +2257,33 @@ test(
           ids.subject,
           checkHome({ sections: [...DEFAULT_SECTIONS], links: [] }),
         );
+      },
+    );
+
+    await t.test(
+      "an admin unlocks a past year, and relocks it (F35)",
+      async () => {
+        const home = await activeHome(db, ids.pastYear);
+        assert.equal(home.year, 2026);
+        assert.equal(home.unlockedAt, null);
+        assert.equal(await setUnlocked(db, ids.pastYear, true), true);
+        const opened = await activeHome(db, ids.pastYear);
+        assert.ok(opened.unlockedAt instanceof Date);
+        assert.equal(
+          await setUnlocked(db, ids.pastYear, true),
+          false,
+          "idempotent",
+        );
+        assert.equal(
+          (await activeHome(db, ids.pastYear)).unlockedAt.getTime(),
+          opened.unlockedAt.getTime(),
+          "a second unlock keeps when the exception started",
+        );
+        assert.equal(await setUnlocked(db, ids.pastYear, false), true);
+        assert.equal(await setUnlocked(db, ids.pastYear, false), false);
+        assert.equal((await activeHome(db, ids.pastYear)).unlockedAt, null);
+        // Not activated is nothing to unlock.
+        assert.equal(await setUnlocked(db, ids.optional, true), null);
       },
     );
 
