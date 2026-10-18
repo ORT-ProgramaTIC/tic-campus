@@ -337,19 +337,54 @@ async function main() {
     { state: "pending" },
   );
   assert.equal(studentPatch.status, 403);
+  const studentPreview = await call(
+    student,
+    "POST",
+    `${path}/preview`,
+    schedule(saved.body.savedAt),
+  );
+  assert.equal(studentPreview.status, 403, "the preview is the editor's");
 
-  for (const method of ["PUT", "PATCH"]) {
-    const noCsrf = await fetch(
-      `${API}${method === "PUT" ? path : `${path}/${alpha.id}/state`}`,
-      {
-        method,
-        headers: {
-          "content-type": "application/json",
-          Cookie: `tic_campus_session_dev=${teacher.secret}`,
-        },
-        body: JSON.stringify({ state: "pending" }),
+  // The teacher's preview of what is saved, sent back unchanged, places
+  // every team where the read does — and writes nothing.
+  const current = (await call(teacher, "GET", path)).body;
+  const preview = await call(teacher, "POST", `${path}/preview`, {
+    base: current.savedAt,
+    blocks: current.blocks.map(({ slots, ...block }) => block),
+    presentations: current.presentations.map((row) => ({
+      projectId: row.projectId,
+      round: row.round,
+      pin: row.pin,
+    })),
+    queueStarts: current.queueStarts,
+  });
+  assert.equal(preview.status, 200, JSON.stringify(preview.body));
+  const placed = (rows) =>
+    rows.map((row) => [row.projectId, row.estimate, row.pinMissed]);
+  assert.deepEqual(
+    placed(preview.body.presentations),
+    placed(current.presentations),
+  );
+  assert.equal(
+    (await call(teacher, "GET", path)).body.savedAt,
+    current.savedAt,
+    "a preview saves nothing",
+  );
+
+  const targets = {
+    PUT: path,
+    POST: `${path}/preview`,
+    PATCH: `${path}/${alpha.id}/state`,
+  };
+  for (const [method, target] of Object.entries(targets)) {
+    const noCsrf = await fetch(`${API}${target}`, {
+      method,
+      headers: {
+        "content-type": "application/json",
+        Cookie: `tic_campus_session_dev=${teacher.secret}`,
       },
-    );
+      body: JSON.stringify({ state: "pending" }),
+    });
     assert.equal(noCsrf.status, 403, `${method} without CSRF`);
     assert.equal((await noCsrf.json()).error.code, "csrf_failed");
   }

@@ -1,7 +1,6 @@
 /**
- * The screens still to build (F45): `shell.tsx` and `presentaciones.tsx` are
- * done. Data, from `api/queries.ts` and `router.tsx`: `usePresentations`,
- * `useSaveSchedule`, `useSetState`, `useOffering`.
+ * The small screens; the shell, the student page and the Cronograma have
+ * their own files.
  */
 
 /** `/proyecto` for someone who takes no Proyecto this year. */
@@ -11,9 +10,4 @@ export function NoProyecto() {
       No tenés Proyecto este año.
     </p>
   );
-}
-
-/** The teacher page: blocks, slots, the queue, the save bar. */
-export function Cronograma() {
-  return null;
 }

@@ -91,6 +91,7 @@ import {
 import {
   myTeams,
   offeringTeams,
+  previewSchedule,
   readSchedule,
   saveSchedule,
   setState,
@@ -2983,6 +2984,49 @@ test(
             body(first, [{ projectId: gone, round: 1, pin: null }]),
           ),
           { code: "unknown_team" },
+        );
+
+        // The preview places an unsaved body — here the order swapped and the
+        // pins dropped — keeps the saved rows' ids, and writes nothing.
+        const preview = await previewSchedule(
+          db,
+          home.homeId,
+          ids.optional,
+          2027,
+          body(first, [
+            { projectId: beta, round: 1, pin: null },
+            { projectId: alpha, round: 1, pin: null },
+          ]),
+          new Date("2027-01-01T00:00:00-03:00"),
+        );
+        assert.deepEqual(
+          preview.map((row) => [
+            row.projectId,
+            row.position,
+            row.estimate?.start,
+            row.estimate?.pinned,
+            row.id === rows.queue.find((q) => q.projectId === row.projectId).id,
+          ]),
+          [
+            [beta, 0, "10:55", false, true],
+            [alpha, 1, "11:22", false, true],
+          ],
+        );
+        assert.equal(
+          (await readSchedule(db, home.homeId)).savedAt.getTime(),
+          first.getTime(),
+          "a preview saves nothing",
+        );
+        await assert.rejects(
+          previewSchedule(
+            db,
+            home.homeId,
+            ids.optional,
+            2027,
+            body(first, [{ projectId: gone, round: 1, pin: null }]),
+          ),
+          { code: "unknown_team" },
+          "refused as the save would be",
         );
 
         // A state flipped on the day survives a save from an older tab, and

@@ -1557,6 +1557,10 @@ student_id, recorded_at DESC)`; `saveOfficialGrades` inserts, and it has to,
     loaded, and a stale one is `409 stale_schedule`. State is a separate `PATCH` that does
     not move `savedAt`, so flipping a team to "presentando" during a presentation never
     stales an open dashboard — which is also why the `PUT` never writes state.
+  - **The dashboard previews before it saves.** `POST …/presentations/preview` takes the
+    `PUT`'s body and answers where every team would land, saving nothing — the gradebook's
+    `…/preview` again, cheap because the estimate is a pure function. It refuses what the
+    save would refuse, so a body that previews is a body that saves, bar the stale check.
   - **A slot can be struck on a date**, for an event that takes it. It keeps its number and
     time — the slots after it do not renumber, so a pin on slot 3 still means slot 3 — and is
     given to nobody, queue or pin. Changing a block's slot count is the one way the struck list

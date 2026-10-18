@@ -470,6 +470,80 @@ function weekday(date: string): string {
   return WEEKDAYS[new Date(Date.UTC(y!, m! - 1, d!)).getUTCDay()]!;
 }
 
+export interface Previewed extends Scheduled {
+  /** `null` for a team this body adds; it gets one when saved. */
+  id: string | null;
+  projectId: number;
+  round: number;
+  position: number;
+  state: PresentationState;
+  pin: { blockId: string; slot: number } | null;
+}
+
+/**
+ * Where every team would land if `input` were saved — the dashboard's live
+ * view while the teacher edits (F45). Refused exactly as the save would be,
+ * so a body that previews is a body that saves; only the stale check is left
+ * to the save, since nothing here is written.
+ *
+ * A team already saved keeps its state (`setState`'s, never the body's); a new
+ * one is `pending`. Same order as the body.
+ */
+export async function previewSchedule(
+  db: Db,
+  homeId: string,
+  offeringId: number,
+  year: number,
+  input: ScheduleInput,
+  now: Date = new Date(),
+): Promise<Previewed[]> {
+  const [teams, modules, saved] = await Promise.all([
+    offeringTeams(db, offeringId),
+    classBlocks(db, offeringId),
+    readSchedule(db, homeId),
+  ]);
+  checkAgainst(
+    input,
+    year,
+    new Set(teams.map((team) => team.projectId)),
+    modules,
+  );
+
+  const existing = new Map(
+    saved.queue.map((row) => [`${row.round}/${row.projectId}`, row]),
+  );
+  const positions = new Map<number, number>();
+  const rows = input.presentations.map((entry) => {
+    const position = positions.get(entry.round) ?? 0;
+    positions.set(entry.round, position + 1);
+    const row = existing.get(`${entry.round}/${entry.projectId}`);
+    return {
+      // The scheduler keys by id; a new team borrows a key no uuid can be.
+      key: row?.id ?? `new/${entry.round}/${entry.projectId}`,
+      id: row?.id ?? null,
+      projectId: entry.projectId,
+      round: entry.round,
+      position,
+      state: (row?.state ?? "pending") as PresentationState,
+      pin: entry.pin,
+    };
+  });
+  const placed = schedule(
+    input.blocks,
+    rows.map((row) => ({
+      id: row.key,
+      round: row.round,
+      position: row.position,
+      state: row.state,
+      pinnedBlockId: row.pin?.blockId ?? null,
+      pinnedSlot: row.pin?.slot ?? null,
+    })),
+    now,
+    input.queueStarts,
+  );
+  return rows.map(({ key, ...row }) => ({ ...row, ...placed.get(key)! }));
+}
+
 /**
  * Save the schedule whole (F45): blocks, slots, order and pins, in one
  * transaction. Returns the new `savedAt`.
@@ -486,10 +560,11 @@ function weekday(date: string): string {
  * Order matters, because of two indexes and two foreign keys: the stale check
  * first, as an `UPDATE` so it takes the row lock and two saves cannot both
  * pass; then the home's pins are cleared, so swapping two teams' pins in one
- * body does not trip `presentation_pin_idx` row by row; then blocks are
- * upserted (a pin may name a new one), then the queue, then whatever was left
- * out is deleted — presentations before blocks, since a pin on a deleted block
- * would otherwise be a foreign-key 500.
+ * body does not trip `presentation_pin_idx` row by row; then the blocks left
+ * out are deleted, which nothing points at any more, so a block re-added on
+ * the same date and module does not trip `(home, date, block)`; then blocks
+ * are upserted (a pin may name a new one), then the queue, then the
+ * presentations left out are deleted.
  */
 export async function saveSchedule(
   db: Db,

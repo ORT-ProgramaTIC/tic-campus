@@ -571,6 +571,7 @@ Proyecto presentations**, ahead of everything else here.
 ```
 GET    /api/homes/:oferta/presentations                 sesión    bloques, turnos, grupos, la cola con su estimación, `mine` (F45)
 PUT    /api/homes/:oferta/presentations                 staff     el cronograma entero: bloques, turnos, orden y fijados
+POST   /api/homes/:oferta/presentations/preview         staff     el mismo cuerpo que el PUT: dónde caería cada grupo, sin guardar
 PATCH  /api/homes/:oferta/presentations/:id/state       staff     el estado de un grupo, el día que presenta
 ```
 

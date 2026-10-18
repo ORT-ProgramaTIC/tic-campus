@@ -12,6 +12,7 @@ import {
   expandSlots,
   myTeams,
   offeringTeams,
+  previewSchedule,
   readSchedule,
   saveSchedule,
   schedule,
@@ -143,6 +144,36 @@ export function createPresentationRoutes(db: Db): Router {
           checkSchedule(req.body),
         );
         res.status(200).json({ savedAt });
+      } catch (cause) {
+        next(cause);
+      }
+    })();
+  });
+
+  /**
+   * The same body as the `PUT`, answered with where every team would land and
+   * nothing saved — the dashboard's live view while the teacher edits. A body
+   * the save would refuse is refused here the same way.
+   */
+  router.post("/:offeringId/presentations/preview", (req, res, next) => {
+    void (async () => {
+      try {
+        const home = await mustManage(req);
+        const input = checkSchedule(req.body);
+        const presentations = await previewSchedule(
+          db,
+          home.homeId,
+          offeringIdFrom(String(req.params.offeringId)),
+          home.year,
+          input,
+        );
+        res.status(200).json({
+          blocks: input.blocks.map((block) => ({
+            ...block,
+            slots: expandSlots(block),
+          })),
+          presentations,
+        });
       } catch (cause) {
         next(cause);
       }

@@ -15,13 +15,14 @@ import {
 } from "./api/queries.ts";
 import type { MyOffering, ResolvedOffering } from "./api/types.ts";
 import { Presentaciones } from "./presentaciones.tsx";
-import { Cronograma, NoProyecto } from "./screens.tsx";
+import { Cronograma } from "./cronograma.tsx";
+import { NoProyecto } from "./screens.tsx";
 import { Shell } from "./shell.tsx";
 
 /**
  * The 2026 slice of the web (`../presentations-gui.md`): the shell with only
- * Proyecto live, and F45's two screens. Routes and data only — every element
- * comes from `screens.tsx`, which is the GUI's (F44).
+ * Proyecto live, and F45's two screens. Routes and data only — the screens
+ * are in their own files.
  *
  * Loaders `ensureQueryData` the same keys the screens read with hooks, so a
  * screen never fetches what its route already did.

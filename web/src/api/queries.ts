@@ -1,4 +1,5 @@
 import {
+  keepPreviousData,
   QueryClient,
   queryOptions,
   useMutation,
@@ -11,6 +12,7 @@ import type {
   MyOffering,
   PresentationState,
   PresentationsPayload,
+  PreviewPayload,
   ResolvedOffering,
   ScheduleBody,
 } from "./types.ts";
@@ -79,6 +81,26 @@ export const useMe = () => useQuery(meQuery);
 export const useMyOfferings = () => useQuery(myOfferingsQuery);
 export const usePresentations = (offeringId: number) =>
   useQuery(presentationsQuery(offeringId));
+
+/**
+ * Where every team would land if `body` were saved; `null` asks nothing. The
+ * previous answer stays on screen while the next one is on its way, so the
+ * Cronograma does not flash empty on every edit.
+ */
+export function usePreview(offeringId: number, body: ScheduleBody | null) {
+  return useQuery({
+    queryKey: ["preview", offeringId, body],
+    queryFn: () =>
+      api<PreviewPayload>(
+        "POST",
+        `/api/homes/${offeringId}/presentations/preview`,
+        body,
+      ),
+    enabled: body !== null,
+    placeholderData: keepPreviousData,
+    staleTime: Infinity,
+  });
+}
 
 /* ── Writes ─────────────────────────────────────────────────────────────── */
 

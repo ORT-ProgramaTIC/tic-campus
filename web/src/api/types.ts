@@ -174,3 +174,22 @@ export interface ScheduleBody {
   }[];
   queueStarts: QueueStart[];
 }
+
+/** One row of `POST …/presentations/preview`: where a team would land if the
+ *  body were saved. In the body's order. */
+export interface PreviewRow {
+  /** `null`: a team this body adds. */
+  id: string | null;
+  projectId: number;
+  round: number;
+  position: number;
+  state: PresentationState;
+  pin: { blockId: string; slot: number } | null;
+  estimate: Estimate | null;
+  pinMissed: boolean;
+}
+
+export interface PreviewPayload {
+  blocks: Block[];
+  presentations: PreviewRow[];
+}
