@@ -14,7 +14,9 @@ import {
   useMyOfferings,
 } from "./api/queries.ts";
 import type { MyOffering, ResolvedOffering } from "./api/types.ts";
-import { Cronograma, NoProyecto, Presentaciones, Shell } from "./screens.tsx";
+import { Presentaciones } from "./presentaciones.tsx";
+import { Cronograma, NoProyecto } from "./screens.tsx";
+import { Shell } from "./shell.tsx";
 
 /**
  * The 2026 slice of the web (`../presentations-gui.md`): the shell with only

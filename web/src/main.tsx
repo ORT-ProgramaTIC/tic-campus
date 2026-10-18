@@ -3,6 +3,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { RouterProvider } from "react-router";
 import { queryClient } from "./api/queries.ts";
+import "@fontsource-variable/inter";
 import "./app.css";
 import { router } from "./router.tsx";
 

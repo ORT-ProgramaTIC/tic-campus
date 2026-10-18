@@ -1,0 +1,3 @@
+tic-x.svg — the tic family mark (../../../../BRAND.md §4).
+md5 bdcfc7656d8d8a489cd8c4cd938351f3, 538 bytes, copied byte-for-byte on 2026-10-18
+from tic-registry/web/src/brand/tic-x.svg. Do not edit; re-copy if upstream changes.

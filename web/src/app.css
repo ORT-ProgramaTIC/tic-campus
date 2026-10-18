@@ -1,2 +1,41 @@
-/* Tailwind, and nothing else yet: the look is F43's, still open. */
 @import "tailwindcss";
+
+/*
+ * The 2026 look: `../Reference/`'s kit as it is, lavender included — for this
+ * year's presentations only. The 2027 brand is still open (F43), so every
+ * colour the screens use is a token here and nowhere else: repainting is this
+ * block.
+ */
+@theme {
+  --font-sans: "Inter Variable", system-ui, sans-serif;
+
+  --color-canvas: #f8f7fc;
+  --color-card: #ffffff;
+  --color-line: #ecebf2;
+
+  --color-ink: #1d1b22;
+  --color-ink-muted: #75717d;
+  --color-ink-faint: #a8a4b1;
+
+  --color-lilac-50: #f5f0ff;
+  --color-lilac-100: #ebe2ff;
+  --color-lilac-300: #c6b0fa;
+  --color-lilac-500: #9d6ff0;
+  --color-lilac-700: #6b3fd0;
+
+  --color-onyx: #1b1b1d;
+
+  /* The family's, not the kit's: only the TIC in the name (`BRAND.md` §5). */
+  --color-tic-pink: #e61366;
+
+  /* The icon circles. */
+  --color-sky-soft: #ddf2ff;
+  --color-peach-soft: #ffede6;
+  --color-mint-soft: #dff7e9;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
