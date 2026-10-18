@@ -255,3 +255,45 @@ export function pin(
     }),
   };
 }
+
+/* ── The queue ─────────────────────────────────────────────────────────── */
+
+/** A team joins the end of a round's queue. */
+export function addTeam(draft: Draft, projectId: number, round: number): Draft {
+  return {
+    ...draft,
+    queue: [...draft.queue, { projectId, round, pin: null }],
+  };
+}
+
+/** A team leaves a round's queue; on save its row, and its state, go. */
+export function removeTeam(
+  draft: Draft,
+  projectId: number,
+  round: number,
+): Draft {
+  return {
+    ...draft,
+    queue: draft.queue.filter(
+      (entry) => !(entry.projectId === projectId && entry.round === round),
+    ),
+  };
+}
+
+/** Move the round's `from`-th team to be its `to`-th. Only order within a
+ *  round is position, so the other rounds keep their entries untouched. */
+export function moveTeam(
+  draft: Draft,
+  round: number,
+  from: number,
+  to: number,
+): Draft {
+  const line = draft.queue.filter((entry) => entry.round === round);
+  if (from === to || to < 0 || to >= line.length) return draft;
+  const [moved] = line.splice(from, 1);
+  line.splice(to, 0, moved!);
+  return {
+    ...draft,
+    queue: [...draft.queue.filter((entry) => entry.round !== round), ...line],
+  };
+}

@@ -154,7 +154,13 @@ export function useSetState(offeringId: number) {
     onError: (_error, _vars, context) => {
       if (context?.before) client.setQueryData(key, context.before);
     },
-    onSettled: () => client.invalidateQueries({ queryKey: key }),
+    // The preview reads states from the database too: an open Cronograma's
+    // estimates move with them.
+    onSettled: () =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: key }),
+        client.invalidateQueries({ queryKey: ["preview", offeringId] }),
+      ]),
   });
 }
 

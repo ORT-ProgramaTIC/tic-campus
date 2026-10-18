@@ -1,5 +1,9 @@
 import {
   AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  GripVertical,
+  X,
   Minus,
   Pin,
   Play,
@@ -15,21 +19,27 @@ import {
   usePresentations,
   usePreview,
   useSaveSchedule,
+  useSetState,
 } from "./api/queries.ts";
 import type {
   Estimate,
   PresentationsPayload,
   PresentationState,
+  Presentation,
   ScheduleBody,
   Slot,
+  Team,
 } from "./api/types.ts";
 import {
   addBlock,
+  addTeam,
   expandSlots,
   fromPayload,
   MAX_SLOTS,
+  moveTeam,
   pin,
   removeBlock,
+  removeTeam,
   setQueueStart,
   setSlotCount,
   setSlotStart,
@@ -39,9 +49,15 @@ import {
   type Draft,
   type DraftBlock,
 } from "./draft.ts";
-import { blockLabel, formatDay, roundLabel } from "./labels.ts";
+import {
+  blockLabel,
+  formatDay,
+  roundLabel,
+  STATE_LABEL,
+  STATE_TONE,
+} from "./labels.ts";
 import { useOffering } from "./router.tsx";
-import { Modal, Section, StateChip } from "./ui.tsx";
+import { Modal, Section } from "./ui.tsx";
 import { WeekGrid } from "./weekgrid.tsx";
 import { addDays, mondayOf, openingWeek } from "./weeks.ts";
 
@@ -314,7 +330,7 @@ function Editor({
         </button>
       </div>
 
-      <div className="grid grid-cols-[minmax(0,1fr)] gap-6 2xl:grid-cols-[minmax(0,1fr)_20rem]">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-6 2xl:grid-cols-[minmax(0,1fr)_24rem]">
         <Section className="min-w-0">
           <WeekGrid
             title="Bloques"
@@ -368,52 +384,15 @@ function Editor({
           />
         </Section>
 
-        <Section>
-          <h2 className="text-lg font-semibold">Orden · {roundLabel(round)}</h2>
-          <ol className="mt-4 flex flex-col gap-1.5">
-            {draft.queue
-              .filter((entry) => entry.round === round)
-              .map((entry, index) => {
-                const at = placed.get(`${round}/${entry.projectId}`);
-                return (
-                  <li
-                    key={entry.projectId}
-                    className="flex items-center gap-2 rounded-xl bg-canvas px-3 py-2 text-sm"
-                  >
-                    <span className="w-5 text-ink-faint tabular-nums">
-                      {index + 1}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate font-medium">
-                        {nameOf(entry.projectId)}
-                      </p>
-                      <p className="text-xs text-ink-muted">
-                        {at?.estimate
-                          ? `${shortDay(at.estimate.date)} · ${at.estimate.start}`
-                          : at &&
-                              at.state !== "pending" &&
-                              at.state !== "presenting"
-                            ? "ya presentó"
-                            : "sin turno"}
-                      </p>
-                    </div>
-                    {entry.pin && (
-                      <Pin
-                        className="size-3.5 shrink-0 text-lilac-700"
-                        aria-label="Turno fijado"
-                      />
-                    )}
-                    {at?.pinMissed && (
-                      <AlertTriangle
-                        className="size-3.5 shrink-0 text-amber-600"
-                        aria-label="Su turno fijo pasó"
-                      />
-                    )}
-                  </li>
-                );
-              })}
-          </ol>
-        </Section>
+        <Queue
+          round={round}
+          draft={draft}
+          edit={edit}
+          placed={placed}
+          saved={payload.presentations}
+          teams={payload.teams}
+          nameOf={nameOf}
+        />
       </div>
 
       {editing &&
@@ -831,5 +810,240 @@ function Toggle({
         <span className="block text-sm text-ink-muted">{hint}</span>
       </span>
     </label>
+  );
+}
+
+const FINISHED: PresentationState[] = [
+  "presented",
+  "passed",
+  "failed",
+  "absent",
+];
+
+/**
+ * A round's order: drag (from the handle) or ↑↓ to reorder, add the teams not
+ * in it yet, take one out. Each row says where the team lands — the preview's
+ * answer while editing — and carries its state, which saves on its own
+ * (`PATCH`, never the draft): only a saved row has the id it needs.
+ */
+function Queue({
+  round,
+  draft,
+  edit,
+  placed,
+  saved,
+  teams,
+  nameOf,
+}: {
+  round: number;
+  draft: Draft;
+  edit: (change: (draft: Draft) => Draft) => void;
+  placed: Map<string, Placement>;
+  saved: Presentation[];
+  teams: Team[];
+  nameOf: (projectId: number) => string;
+}) {
+  const offering = useOffering();
+  const setState = useSetState(offering.offeringId);
+  const line = draft.queue.filter((entry) => entry.round === round);
+  const missing = teams.filter(
+    (team) => !line.some((entry) => entry.projectId === team.projectId),
+  );
+  const rowOf = new Map(
+    saved
+      .filter((row) => row.round === round)
+      .map((row) => [row.projectId, row]),
+  );
+  // Native drag, armed from the handle only, so the row's select and buttons
+  // stay ordinary controls.
+  const [armed, setArmed] = useState<number>();
+  const [dragging, setDragging] = useState<number>();
+  const [over, setOver] = useState<number>();
+  const move = (from: number, to: number) =>
+    edit((d) => moveTeam(d, round, from, to));
+
+  return (
+    <Section>
+      <h2 className="text-lg font-semibold">Orden · {roundLabel(round)}</h2>
+      {line.length === 0 && (
+        <p className="mt-4 text-sm text-ink-muted">
+          Todavía no hay grupos en esta ronda.
+        </p>
+      )}
+      <ol className="mt-4 flex flex-col gap-1.5">
+        {line.map((entry, index) => {
+          const at = placed.get(`${round}/${entry.projectId}`);
+          const row = rowOf.get(entry.projectId);
+          const state = row?.state ?? "pending";
+          const name = nameOf(entry.projectId);
+          return (
+            <li
+              key={entry.projectId}
+              draggable={armed === index}
+              onDragStart={(event) => {
+                event.dataTransfer.effectAllowed = "move";
+                setDragging(index);
+              }}
+              onDragOver={(event) => {
+                if (dragging === undefined) return;
+                event.preventDefault();
+                setOver(index);
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                if (dragging !== undefined) move(dragging, index);
+              }}
+              onDragEnd={() => {
+                setArmed(undefined);
+                setDragging(undefined);
+                setOver(undefined);
+              }}
+              className={`flex items-center gap-2 rounded-xl bg-canvas py-2 pr-2 pl-1 text-sm ${
+                over === index && dragging !== index
+                  ? "ring-2 ring-lilac-300"
+                  : ""
+              } ${dragging === index ? "opacity-50" : ""}`}
+            >
+              <span
+                onPointerDown={() => setArmed(index)}
+                onPointerUp={() =>
+                  dragging === undefined && setArmed(undefined)
+                }
+                className="cursor-grab text-ink-faint active:cursor-grabbing"
+                aria-hidden
+              >
+                <GripVertical className="size-4" />
+              </span>
+              <span className="w-5 text-right text-ink-faint tabular-nums">
+                {index + 1}
+              </span>
+              {/* Name over state on a phone, side by side from `sm`. */}
+              <div className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                <div className="min-w-0 flex-1">
+                  <p className="flex items-center gap-1 font-medium">
+                    <span className="truncate" title={name}>
+                      {name}
+                    </span>
+                    {entry.pin && (
+                      <Pin
+                        className="size-3.5 shrink-0 text-lilac-700"
+                        aria-label="Turno fijado"
+                      />
+                    )}
+                  </p>
+                  <p
+                    className={`text-xs ${at?.pinMissed ? "text-amber-700" : "text-ink-muted"}`}
+                  >
+                    {at?.pinMissed && "Su turno fijo pasó · "}
+                    {at?.estimate
+                      ? `${shortDay(at.estimate.date)} · ${at.estimate.start}`
+                      : FINISHED.includes(state)
+                        ? "ya presentó"
+                        : "sin turno"}
+                  </p>
+                </div>
+                <select
+                  value={state}
+                  disabled={!row || setState.isPending}
+                  title={row ? "Estado" : "Guardá para cambiarle el estado"}
+                  aria-label={`Estado de ${name}`}
+                  onChange={(event) =>
+                    setState.mutate({
+                      id: row!.id,
+                      state: event.target.value as PresentationState,
+                    })
+                  }
+                  className={`max-w-32 self-start rounded-full px-2 py-1 text-xs sm:self-auto font-medium ring-1 ring-inset disabled:opacity-60 ${STATE_TONE[state]}`}
+                >
+                  {(Object.keys(STATE_LABEL) as PresentationState[]).map(
+                    (one) => (
+                      <option key={one} value={one}>
+                        {STATE_LABEL[one]}
+                      </option>
+                    ),
+                  )}
+                </select>
+              </div>
+              <div className="flex flex-col">
+                <button
+                  type="button"
+                  aria-label={`Subir a ${name}`}
+                  disabled={index === 0}
+                  onClick={() => move(index, index - 1)}
+                  className="rounded text-ink-muted hover:text-ink disabled:text-line"
+                >
+                  <ChevronUp className="size-4" aria-hidden />
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Bajar a ${name}`}
+                  disabled={index === line.length - 1}
+                  onClick={() => move(index, index + 1)}
+                  className="rounded text-ink-muted hover:text-ink disabled:text-line"
+                >
+                  <ChevronDown className="size-4" aria-hidden />
+                </button>
+              </div>
+              <button
+                type="button"
+                aria-label={`Sacar a ${name} de la ronda`}
+                onClick={() => {
+                  if (
+                    FINISHED.includes(state) &&
+                    !window.confirm(
+                      `${name} ya tiene estado "${STATE_LABEL[state]}". Al guardar se pierde. ¿Sacarlo igual?`,
+                    )
+                  ) {
+                    return;
+                  }
+                  edit((d) => removeTeam(d, entry.projectId, round));
+                }}
+                className="grid size-7 place-items-center rounded-lg text-ink-muted hover:bg-red-50 hover:text-red-600"
+              >
+                <X className="size-4" aria-hidden />
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+
+      {missing.length > 0 && (
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <select
+            value=""
+            aria-label="Agregar grupo"
+            onChange={(event) =>
+              edit((d) => addTeam(d, Number(event.target.value), round))
+            }
+            className="min-w-0 flex-1 rounded-xl border border-line bg-card px-3 py-2 text-sm"
+          >
+            <option value="" disabled>
+              Agregar grupo…
+            </option>
+            {missing.map((team) => (
+              <option key={team.projectId} value={team.projectId}>
+                {team.name}
+              </option>
+            ))}
+          </select>
+          {missing.length > 1 && (
+            <button
+              type="button"
+              onClick={() =>
+                edit((d) =>
+                  missing.reduce(
+                    (acc, team) => addTeam(acc, team.projectId, round),
+                    d,
+                  ),
+                )
+              }
+              className="rounded-xl px-3 py-2 text-sm font-medium text-lilac-700 hover:bg-lilac-50"
+            >
+              Agregar los {missing.length} que faltan
+            </button>
+          )}
+        </div>
+      )}
+    </Section>
   );
 }

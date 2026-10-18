@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   addBlock,
+  addTeam,
+  moveTeam,
+  removeTeam,
   expandSlots,
   pin,
   removeBlock,
@@ -96,4 +99,26 @@ test("removing a block takes its pins and its start with it", () => {
     [draft.blocks, draft.queue.map((entry) => entry.pin), draft.queueStarts],
     [[], [null, null], []],
   );
+});
+
+test("the queue: add at the end, move within the round, remove", () => {
+  const q = (draft, round) =>
+    draft.queue.filter((e) => e.round === round).map((e) => e.projectId);
+  let draft = {
+    blocks: [],
+    queueStarts: [],
+    queue: [
+      { projectId: 1, round: 1, pin: null },
+      { projectId: 9, round: 2, pin: null },
+      { projectId: 2, round: 1, pin: null },
+    ],
+  };
+  draft = addTeam(draft, 3, 1);
+  assert.deepEqual(q(draft, 1), [1, 2, 3]);
+  draft = moveTeam(draft, 1, 2, 0);
+  assert.deepEqual(q(draft, 1), [3, 1, 2]);
+  assert.deepEqual(q(draft, 2), [9], "the other round is untouched");
+  assert.equal(moveTeam(draft, 1, 0, -1), draft, "past the top is no move");
+  draft = removeTeam(draft, 1, 1);
+  assert.deepEqual(q(draft, 1), [3, 2]);
 });
