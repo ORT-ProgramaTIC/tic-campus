@@ -247,16 +247,17 @@ async function main() {
       alpha.estimate.end,
       alpha.estimate.pinned,
     ],
-    ["2027-11-12", "10:55", "11:40", false],
-    "first in the queue, first free slot, ending where the override starts",
+    ["2027-11-12", "10:55", "11:15", false],
+    "first in the queue, first free slot, 20 minutes long",
   );
   assert.deepEqual(
     [beta.estimate.start, beta.estimate.pinned],
-    ["11:48", true],
+    ["12:00", true],
   );
   assert.deepEqual(
     read.body.blocks[0].slots.map((slot) => slot.start),
-    ["10:55", "11:40", "11:48"],
+    ["10:55", "11:40", "12:00"],
+    "the override moves the slot after it too",
   );
 
   /* ── An event takes slot 1, and the queue starts at slot 2 ─────────────── */

@@ -42,20 +42,23 @@ const fresh = () =>
     { blockId: "b", slot: 2 },
   );
 
-test("slots split like the api's, an override moving the slot before it", () => {
+test("slots split like the api's, an override moving the slots after it", () => {
   // The harness's numbers for the same block.
   const block = setSlotStart(fresh(), "b", 2, "11:40").blocks[0];
   assert.deepEqual(
     expandSlots(block, bell).map((slot) => [slot.start, slot.end]),
     [
-      ["10:55", "11:40"],
-      ["11:40", "11:48"],
-      ["11:48", "12:15"],
+      ["10:55", "11:15"],
+      ["11:40", "12:00"],
+      ["12:00", "12:15"],
     ],
   );
   assert.equal(timesProblem(block, bell), null);
-  const jumped = setSlotStart(fresh(), "b", 2, "11:50").blocks[0];
+  const jumped = setSlotStart(fresh(), "b", 3, "11:10").blocks[0];
   assert.match(timesProblem(jumped, bell), /en orden/);
+  // Pushed past the bell: the third would start at 12:20.
+  const late = setSlotStart(fresh(), "b", 2, "12:00").blocks[0];
+  assert.match(timesProblem(late, bell), /en orden/);
   assert.equal(
     setSlotStart(setSlotStart(fresh(), "b", 2, "11:40"), "b", 2, null).blocks[0]
       .slotStarts,

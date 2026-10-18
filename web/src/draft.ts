@@ -62,28 +62,37 @@ const minutes = (hhmm: string) => {
 const hhmm = (total: number) =>
   `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
 
-/** Mirrors `api/src/offerings/presentations.ts`'s `expandSlots`: the even
- *  split of the bell time, overrides replacing starts, each slot ending where
- *  the next begins. */
+const SLOT_MINUTES = 20;
+
+/** Mirrors `api/src/offerings/presentations.ts`'s `expandSlots`: 20-minute
+ *  slots back to back from the bell (shorter if too many to fit), an override
+ *  replacing a start and moving the slots after it, each slot cut short by the
+ *  next one or the bell. */
 export function expandSlots(block: DraftBlock, bell: Bell): Slot[] {
   const { start: from, end: to } = bell[block.block]!;
-  const start = minutes(from);
-  const length = minutes(to) - start;
-  const starts = Array.from({ length: block.slotCount }, (_, i) => {
+  const end = minutes(to);
+  const step = Math.min(
+    SLOT_MINUTES,
+    Math.floor((end - minutes(from)) / block.slotCount),
+  );
+  const starts: { at: number; overridden: boolean }[] = [];
+  for (let i = 0; i < block.slotCount; i++) {
     const override = block.slotStarts?.[i] ?? null;
-    return override === null
-      ? {
-          at: start + Math.round((length * i) / block.slotCount),
-          overridden: false,
-        }
-      : { at: minutes(override), overridden: true };
-  });
+    starts.push(
+      override === null
+        ? {
+            at: i === 0 ? minutes(from) : starts[i - 1]!.at + step,
+            overridden: false,
+          }
+        : { at: minutes(override), overridden: true },
+    );
+  }
   return starts.map((one, i) => ({
     blockId: block.id,
     slot: i + 1,
     date: block.date,
     start: hhmm(one.at),
-    end: hhmm(starts[i + 1]?.at ?? minutes(to)),
+    end: hhmm(Math.min(one.at + SLOT_MINUTES, starts[i + 1]?.at ?? end, end)),
     overridden: one.overridden,
     skipped: block.skippedSlots.includes(i + 1),
   }));
@@ -176,7 +185,7 @@ export function setSlotCount(
   return prune(resized, blockId, (slot) => slot <= count);
 }
 
-/** One slot's start, or `null` back to the even split. */
+/** One slot's start, or `null` back to automatic. */
 export function setSlotStart(
   draft: Draft,
   blockId: string,

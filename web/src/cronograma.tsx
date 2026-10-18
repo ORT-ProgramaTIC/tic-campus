@@ -624,6 +624,7 @@ function BlockDialog({
         </div>
       </div>
       <p className="mt-2 text-sm text-ink-muted">
+        Cada turno dura 20 minutos y lo que sobra del bloque queda de margen.
         Cambiar la cantidad reparte el bloque de nuevo: los horarios vuelven a
         automático, los turnos quitados vuelven, y se sueltan los grupos fijados
         en turnos que dejan de existir.

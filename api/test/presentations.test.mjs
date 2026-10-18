@@ -50,36 +50,48 @@ const where = (placed, id) => {
   return estimate ? `${estimate.date} ${estimate.start}` : null;
 };
 
-test("a block splits evenly into three by default, the last slot ending with the bell", () => {
+test("a block holds three 20-minute slots by default, the last 20 left as margin", () => {
   const slots = expandSlots(block("b", FRI, 3));
   assert.deepEqual(
     slots.map((slot) => [slot.start, slot.end]),
     [
-      ["10:55", "11:22"],
-      ["11:22", "11:48"],
-      ["11:48", "12:15"],
+      ["10:55", "11:15"],
+      ["11:15", "11:35"],
+      ["11:35", "11:55"],
     ],
   );
 });
 
-test("changing the count re-splits the block", () => {
-  const slots = expandSlots(block("b", FRI, 1, { slotCount: 4 }));
+test("more slots than fit at 20 minutes share the block, the last ending with the bell", () => {
+  const four = expandSlots(block("b", FRI, 1, { slotCount: 4 }));
   assert.deepEqual(
-    slots.map((slot) => slot.start),
+    four.map((slot) => slot.start),
     ["07:45", "08:05", "08:25", "08:45"],
+  );
+  assert.equal(four[3].end, "09:05");
+  const five = expandSlots(block("b", FRI, 1, { slotCount: 5 }));
+  assert.deepEqual(
+    five.map((slot) => [slot.start, slot.end]),
+    [
+      ["07:45", "08:01"],
+      ["08:01", "08:17"],
+      ["08:17", "08:33"],
+      ["08:33", "08:49"],
+      ["08:49", "09:05"],
+    ],
   );
 });
 
-test("an override moves one start and the end of the slot before it", () => {
+test("an override moves its slot and the ones after it", () => {
   const slots = expandSlots(
     block("b", FRI, 3, { slotStarts: [null, "11:40", null] }),
   );
   assert.deepEqual(
     slots.map((slot) => [slot.start, slot.end, slot.overridden]),
     [
-      ["10:55", "11:40", false],
-      ["11:40", "11:48", true],
-      ["11:48", "12:15", false],
+      ["10:55", "11:15", false],
+      ["11:40", "12:00", true],
+      ["12:00", "12:15", false],
     ],
   );
 });
@@ -92,7 +104,7 @@ test("the queue fills slots in time order, and whoever does not fit has no estim
   const queue = [team("a", 0), team("b", 1), team("c", 2), team("d", 3)];
   const placed = schedule(blocks, queue, BEFORE);
   assert.equal(where(placed, "a"), `${FRI} 10:55`);
-  assert.equal(where(placed, "b"), `${FRI} 11:35`);
+  assert.equal(where(placed, "b"), `${FRI} 11:15`);
   assert.equal(where(placed, "c"), `${TUE} 07:45`);
   assert.equal(where(placed, "d"), null);
 });
@@ -107,8 +119,8 @@ test("a pin holds its slot and the queue flows around it", () => {
   const placed = schedule(blocks, queue, BEFORE);
   assert.equal(where(placed, "b"), `${FRI} 10:55`);
   assert.equal(placed.get("b").estimate.pinned, true);
-  assert.equal(where(placed, "a"), `${FRI} 11:22`);
-  assert.equal(where(placed, "c"), `${FRI} 11:48`);
+  assert.equal(where(placed, "a"), `${FRI} 11:15`);
+  assert.equal(where(placed, "c"), `${FRI} 11:35`);
 });
 
 test("a missed pin falls back into the queue at its position, flagged", () => {
@@ -122,7 +134,7 @@ test("a missed pin falls back into the queue at its position, flagged", () => {
   assert.equal(placed.get("a").pinMissed, true);
   assert.equal(placed.get("a").estimate.pinned, false);
   assert.equal(where(placed, "a"), `${TUE} 07:45`);
-  assert.equal(where(placed, "b"), `${TUE} 08:12`);
+  assert.equal(where(placed, "b"), `${TUE} 08:05`);
 });
 
 test("a team presenting right now keeps the slot it is in", () => {
@@ -131,7 +143,7 @@ test("a team presenting right now keeps the slot it is in", () => {
   // Ten minutes into the first slot.
   const placed = schedule(blocks, queue, at(FRI, "11:05"));
   assert.equal(where(placed, "a"), `${FRI} 10:55`);
-  assert.equal(where(placed, "b"), `${FRI} 11:22`);
+  assert.equal(where(placed, "b"), `${FRI} 11:15`);
 });
 
 test("rounds do not borrow each other's blocks", () => {
@@ -209,8 +221,8 @@ test("a struck slot keeps its time and number, and is given to nobody", () => {
     slots.map((slot) => [slot.slot, slot.start, slot.skipped]),
     [
       [1, "10:55", false],
-      [2, "11:22", true],
-      [3, "11:48", false],
+      [2, "11:15", true],
+      [3, "11:35", false],
     ],
   );
   const placed = schedule(
@@ -219,7 +231,7 @@ test("a struck slot keeps its time and number, and is given to nobody", () => {
     BEFORE,
   );
   assert.equal(where(placed, "a"), `${FRI} 10:55`);
-  assert.equal(where(placed, "b"), `${FRI} 11:48`, "slot 2 is skipped");
+  assert.equal(where(placed, "b"), `${FRI} 11:35`, "slot 2 is skipped");
   assert.equal(where(placed, "c"), null);
 });
 
@@ -228,7 +240,7 @@ test("a pin on a slot struck since falls back into the queue", () => {
   const queue = [team("a", 0, { pinnedBlockId: "fri", pinnedSlot: 1 })];
   const placed = schedule(blocks, queue, BEFORE);
   assert.equal(placed.get("a").pinMissed, true);
-  assert.equal(where(placed, "a"), `${FRI} 11:22`);
+  assert.equal(where(placed, "a"), `${FRI} 11:15`);
 });
 
 test("the queue begins at the round's start, even with earlier slots still ahead", () => {
@@ -236,7 +248,7 @@ test("the queue begins at the round's start, even with earlier slots still ahead
   const queue = [team("a", 0), team("b", 1)];
   const starts = [{ round: 1, blockId: "fri", slot: 3 }];
   const placed = schedule(blocks, queue, BEFORE, starts);
-  assert.equal(where(placed, "a"), `${FRI} 11:48`);
+  assert.equal(where(placed, "a"), `${FRI} 11:35`);
   assert.equal(where(placed, "b"), `${TUE} 07:45`);
 });
 
@@ -256,8 +268,8 @@ test("a pin before the start still holds; a missed pin lands after the start", (
     "the pin ignores the start",
   );
   assert.equal(placed.get("missed").pinMissed, true);
-  assert.equal(where(placed, "missed"), `${FRI} 11:22`);
-  assert.equal(where(placed, "c"), `${FRI} 11:48`);
+  assert.equal(where(placed, "missed"), `${FRI} 11:15`);
+  assert.equal(where(placed, "c"), `${FRI} 11:35`);
 });
 
 test("a start on a struck slot still marks the point; a dangling start is from now", () => {
@@ -268,7 +280,7 @@ test("a start on a struck slot still marks the point; a dangling start is from n
       schedule(blocks, queue, BEFORE, [{ round: 1, blockId: "fri", slot: 2 }]),
       "a",
     ),
-    `${FRI} 11:48`,
+    `${FRI} 11:35`,
   );
   assert.equal(
     where(

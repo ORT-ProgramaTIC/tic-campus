@@ -581,8 +581,9 @@ membership. An offering's teams are the live projects with a member who is here 
 is a row to add in tic-registry, not here. Each team carries its members' name, surname and
 track (not email or DNI), and every reader of the page gets every team's. **A block is only one the class meets in**: its date
 and number must match a row of `directory.offering_time_slot`, or the save is
-`400 not_a_class_block`. A block splits into three slots by default, evenly across `BELL`
-(`api/src/offerings/presentations.ts`); the count and any slot's start can be changed.
+`400 not_a_class_block`. A block holds three 20-minute slots by default, back to back from `BELL`'s start, leaving
+the block's last 20 minutes as margin (`api/src/offerings/presentations.ts`); the count and any
+slot's start can be changed, and an override moves the slots after it.
 
 **The estimate is derived on every read**, as marks are. Pinned teams hold their slot while it
 is live; everyone else waiting takes the next free slot in queue order; a pin whose slot ended

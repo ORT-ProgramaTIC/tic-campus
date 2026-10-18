@@ -82,7 +82,7 @@ export interface Block {
   date: string;
   block: number;
   slotCount: number;
-  /** One `HH:MM` per slot, or `null` for the even split. May be shorter than
+  /** One `HH:MM` per slot, or `null` for automatic. May be shorter than
    *  `slotCount`, or absent, which reads as all `null`. */
   slotStarts: (string | null)[] | null;
   /** Slot numbers struck on this date — an event took them. They keep their
@@ -120,31 +120,42 @@ function hhmm(total: number): string {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
+/** How long a presentation slot is. A block is 80 minutes, so the default
+ *  three leave 20 at the end as margin for the ones that run over. */
+export const SLOT_MINUTES = 20;
+
 /**
- * A block's slots: the even split of its bell time into `slotCount`, with any
- * override replacing that slot's start. A slot ends where the next one starts,
- * and the last one where the block does — so an override moves the end of the
- * slot before it, which is what a teacher who typed "11:40" meant.
+ * A block's slots: back to back from the bell, `SLOT_MINUTES` each (less when
+ * so many are asked for that they would not fit), with any override replacing
+ * that slot's start. A slot after an override follows it, so typing "11:40"
+ * on the second moves the third along with it. A slot ends `SLOT_MINUTES`
+ * after it starts, or earlier where the next one or the block's bell cuts it.
  */
 export function expandSlots(block: Block): Slot[] {
   const bell = BELL[block.block]!;
-  const start = minutes(bell.start);
-  const length = minutes(bell.end) - start;
-  const starts = Array.from({ length: block.slotCount }, (_, i) => {
+  const end = minutes(bell.end);
+  const step = Math.min(
+    SLOT_MINUTES,
+    Math.floor((end - minutes(bell.start)) / block.slotCount),
+  );
+  const starts: { at: number; overridden: boolean }[] = [];
+  for (let i = 0; i < block.slotCount; i++) {
     const override = block.slotStarts?.[i] ?? null;
-    return override === null
-      ? {
-          at: start + Math.round((length * i) / block.slotCount),
-          overridden: false,
-        }
-      : { at: minutes(override), overridden: true };
-  });
+    starts.push(
+      override === null
+        ? {
+            at: i === 0 ? minutes(bell.start) : starts[i - 1]!.at + step,
+            overridden: false,
+          }
+        : { at: minutes(override), overridden: true },
+    );
+  }
   return starts.map((one, i) => ({
     blockId: block.id,
     slot: i + 1,
     date: block.date,
     start: hhmm(one.at),
-    end: hhmm(starts[i + 1]?.at ?? minutes(bell.end)),
+    end: hhmm(Math.min(one.at + SLOT_MINUTES, starts[i + 1]?.at ?? end, end)),
     overridden: one.overridden,
     skipped: block.skippedSlots.includes(i + 1),
   }));

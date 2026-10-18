@@ -3009,7 +3009,7 @@ test(
           ]),
           [
             [beta, 0, "10:55", false, true],
-            [alpha, 1, "11:22", false, true],
+            [alpha, 1, "11:15", false, true],
           ],
         );
         assert.equal(

@@ -28,7 +28,7 @@ import { offeringHome } from "./offering-home.js";
  * cannot see them.
  *
  * **Slots are a count and an array of overrides, not rows.** `slot_starts`
- * holds one `HH:MM` per slot, or `null` for "where the even split puts it", and
+ * holds one `HH:MM` per slot, or `null` for "where the defaults put it", and
  * its length is `slot_count`. Rows per slot would leave stale times behind
  * every time a teacher changed the count; this way changing it re-splits, and
  * the only thing that can dangle is a pin past the new count, which the save

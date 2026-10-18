@@ -79,7 +79,7 @@ export interface Slot {
   /** `HH:MM`. */
   start: string;
   end: string;
-  /** Its start was typed by a teacher rather than split evenly. */
+  /** Its start was typed by a teacher rather than automatic. */
   overridden: boolean;
   /** Struck on this date: draw it crossed out, it goes to nobody. */
   skipped: boolean;
@@ -93,7 +93,7 @@ export interface Block {
   /** 1–6. */
   block: number;
   slotCount: number;
-  /** One `HH:MM` or `null` (even split) per slot; `null` for all-even. */
+  /** One `HH:MM` or `null` (automatic) per slot; `null` for all automatic. */
   slotStarts: (string | null)[] | null;
   skippedSlots: number[];
   /** Read-only, computed: send `Block` without it. */

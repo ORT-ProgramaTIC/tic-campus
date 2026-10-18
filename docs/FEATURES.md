@@ -1531,11 +1531,13 @@ student_id, recorded_at DESC)`; `saveOfficialGrades` inserts, and it has to,
   - **Only the offering's own blocks.** A presentation block is a date plus a block number,
     and both must match one of the offering's weekly modules in
     `directory.offering_time_slot` — a block the class does not meet in is a `400`.
-  - **A block holds its own slots.** Three by default, split evenly across the block from
-    F42's `BELL`; the teacher may change the count and override any slot's start. A slot ends
-    where the next one starts, and the last one where the block does. Stored as a count and
-    an array of overrides with `null` for "even", so changing the count re-splits instead of
-    leaving stale times behind.
+  - **A block holds its own slots.** Three by default, 20 minutes each, back to back from
+    F42's `BELL` start: an 80-minute block keeps its last 20 as margin for the ones that run
+    over. More than fit at 20 share the block evenly. The teacher may change the count and
+    override any slot's start; the slots after an override follow it, so moving one moves
+    the rest. A slot is cut short by the next one or the bell. Stored as a count and an
+    array of overrides with `null` for "where the defaults put it", so changing the count
+    re-splits instead of leaving stale times behind.
   - **A team may be pinned** to a block and slot. Two teams cannot share one, and Postgres
     says so (a partial unique index), not a check two tabs would both pass.
   - **The estimate is derived on every read and never stored**, exactly as marks are (F20).
