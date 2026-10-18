@@ -593,6 +593,12 @@ stale_schedule`.
 - **Block ids come from the client** (`crypto.randomUUID()`), because a team can be pinned to a
   block created in the same body.
 
+Two refinements ride the same `PUT`. A block's `skippedSlots` strikes slots on that date (an
+event took them): they keep their number and time and go to nobody, and a number past
+`slotCount` is refused — so the editor clears the list when the count changes. `queueStarts`
+(`{ round, blockId, slot }`, one per round) is where a round's queue begins: earlier slots are
+skipped by the queue, not by pins, and leaving it out means "from now".
+
 Signed-in only: staff of the offering and its enrolled students; anyone else is a `403`. No year
 lock — F35 locks marks.
 

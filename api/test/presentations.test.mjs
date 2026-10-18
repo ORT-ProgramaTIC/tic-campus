@@ -28,6 +28,7 @@ function block(id, date, number, extra = {}) {
     block: number,
     slotCount: 3,
     slotStarts: null,
+    skippedSlots: [],
     ...extra,
   };
 }
@@ -195,6 +196,109 @@ test("the body checker takes the shape and refuses the obvious garbage", () => {
             slotStarts: ["11:00"],
           },
         ],
+        presentations: [],
+      }),
+    { code: "invalid_body" },
+  );
+});
+
+test("a struck slot keeps its time and number, and is given to nobody", () => {
+  const blocks = [block("fri", FRI, 3, { skippedSlots: [2] })];
+  const slots = expandSlots(blocks[0]);
+  assert.deepEqual(
+    slots.map((slot) => [slot.slot, slot.start, slot.skipped]),
+    [
+      [1, "10:55", false],
+      [2, "11:22", true],
+      [3, "11:48", false],
+    ],
+  );
+  const placed = schedule(
+    blocks,
+    [team("a", 0), team("b", 1), team("c", 2)],
+    BEFORE,
+  );
+  assert.equal(where(placed, "a"), `${FRI} 10:55`);
+  assert.equal(where(placed, "b"), `${FRI} 11:48`, "slot 2 is skipped");
+  assert.equal(where(placed, "c"), null);
+});
+
+test("a pin on a slot struck since falls back into the queue", () => {
+  const blocks = [block("fri", FRI, 3, { skippedSlots: [1] })];
+  const queue = [team("a", 0, { pinnedBlockId: "fri", pinnedSlot: 1 })];
+  const placed = schedule(blocks, queue, BEFORE);
+  assert.equal(placed.get("a").pinMissed, true);
+  assert.equal(where(placed, "a"), `${FRI} 11:22`);
+});
+
+test("the queue begins at the round's start, even with earlier slots still ahead", () => {
+  const blocks = [block("fri", FRI, 3), block("tue", TUE, 1)];
+  const queue = [team("a", 0), team("b", 1)];
+  const starts = [{ round: 1, blockId: "fri", slot: 3 }];
+  const placed = schedule(blocks, queue, BEFORE, starts);
+  assert.equal(where(placed, "a"), `${FRI} 11:48`);
+  assert.equal(where(placed, "b"), `${TUE} 07:45`);
+});
+
+test("a pin before the start still holds; a missed pin lands after the start", () => {
+  const blocks = [block("thu", "2026-11-12", 3), block("fri", FRI, 3)];
+  const queue = [
+    team("early", 0, { pinnedBlockId: "fri", pinnedSlot: 1 }),
+    team("missed", 1, { pinnedBlockId: "thu", pinnedSlot: 1 }),
+    team("c", 2),
+  ];
+  const starts = [{ round: 1, blockId: "fri", slot: 2 }];
+  // Thursday is over; Friday has not started.
+  const placed = schedule(blocks, queue, at(FRI, "07:00"), starts);
+  assert.equal(
+    where(placed, "early"),
+    `${FRI} 10:55`,
+    "the pin ignores the start",
+  );
+  assert.equal(placed.get("missed").pinMissed, true);
+  assert.equal(where(placed, "missed"), `${FRI} 11:22`);
+  assert.equal(where(placed, "c"), `${FRI} 11:48`);
+});
+
+test("a start on a struck slot still marks the point; a dangling start is from now", () => {
+  const blocks = [block("fri", FRI, 3, { skippedSlots: [2] })];
+  const queue = [team("a", 0)];
+  assert.equal(
+    where(
+      schedule(blocks, queue, BEFORE, [{ round: 1, blockId: "fri", slot: 2 }]),
+      "a",
+    ),
+    `${FRI} 11:48`,
+  );
+  assert.equal(
+    where(
+      schedule(blocks, queue, BEFORE, [{ round: 1, blockId: "gone", slot: 1 }]),
+      "a",
+    ),
+    `${FRI} 10:55`,
+  );
+});
+
+test("the body checker takes struck slots and starts", () => {
+  const id = "5f8e1c9a-2b3d-4e5f-8a9b-0c1d2e3f4a5b";
+  const ok = checkSchedule({
+    base: null,
+    blocks: [{ id, round: 1, date: FRI, block: 3, skippedSlots: [3, 1] }],
+    presentations: [],
+    queueStarts: [{ round: 1, blockId: id.toUpperCase(), slot: 2 }],
+  });
+  assert.deepEqual(ok.blocks[0].skippedSlots, [1, 3]);
+  assert.deepEqual(ok.queueStarts, [{ round: 1, blockId: id, slot: 2 }]);
+  assert.deepEqual(
+    checkSchedule({ base: null, blocks: [], presentations: [] }).queueStarts,
+    [],
+    "absent is from now",
+  );
+  assert.throws(
+    () =>
+      checkSchedule({
+        base: null,
+        blocks: [{ id, round: 1, date: FRI, block: 3, skippedSlots: ["2"] }],
         presentations: [],
       }),
     { code: "invalid_body" },

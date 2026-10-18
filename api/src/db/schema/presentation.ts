@@ -49,6 +49,10 @@ export const presentationBlock = campus.table(
     block: integer("block").notNull(),
     slotCount: integer("slot_count").notNull().default(3),
     slotStarts: text("slot_starts").array().$type<(string | null)[]>(),
+    /** Slot numbers struck on this date — an event took them. Numbers, not
+     *  times, so the slots after a struck one keep their number and a pin on
+     *  slot 3 still means slot 3. Past `slot_count` is refused on save. */
+    skippedSlots: integer("skipped_slots").array().notNull().default([]),
   },
   (t) => [
     /** A block on a date is given to one round, once. Also the order the home's

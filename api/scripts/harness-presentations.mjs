@@ -259,6 +259,43 @@ async function main() {
     ["10:55", "11:40", "11:48"],
   );
 
+  /* ── An event takes slot 1, and the queue starts at slot 2 ─────────────── */
+
+  const restruck = await call(
+    teacher,
+    "PUT",
+    path,
+    schedule(saved.body.savedAt, {
+      blocks: [
+        {
+          id: fri,
+          round: 1,
+          date: "2027-11-12",
+          block: 3,
+          slotStarts: [null, "11:40", null],
+          skippedSlots: [1],
+        },
+      ],
+      queueStarts: [{ round: 1, blockId: fri, slot: 2 }],
+    }),
+  );
+  assert.equal(restruck.status, 200, JSON.stringify(restruck.body));
+  const moved = await call(student, "GET", path);
+  assert.deepEqual(moved.body.queueStarts, [
+    { round: 1, blockId: fri, slot: 2 },
+  ]);
+  assert.deepEqual(
+    moved.body.blocks[0].slots.map((slot) => slot.skipped),
+    [true, false, false],
+    "slot 1 comes back crossed out, not gone",
+  );
+  assert.equal(
+    moved.body.presentations.find((p) => p.projectId === ids.alpha).estimate
+      .start,
+    "11:40",
+    "Alfa moves to slot 2",
+  );
+
   /* ── State, on the day ─────────────────────────────────────────────────── */
 
   const flip = await call(teacher, "PATCH", `${path}/${alpha.id}/state`, {
@@ -268,7 +305,7 @@ async function main() {
   const after = await call(teacher, "GET", path);
   assert.equal(
     after.body.savedAt,
-    saved.body.savedAt,
+    restruck.body.savedAt,
     "a state change does not stale the dashboard",
   );
   const done = after.body.presentations.find((p) => p.projectId === ids.alpha);

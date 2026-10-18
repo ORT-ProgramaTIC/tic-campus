@@ -84,6 +84,16 @@ export interface Block {
   /** One `HH:MM` per slot, or `null` for the even split. May be shorter than
    *  `slotCount`, or absent, which reads as all `null`. */
   slotStarts: (string | null)[] | null;
+  /** Slot numbers struck on this date — an event took them. They keep their
+   *  number and time, so the slots after them do not renumber. */
+  skippedSlots: number[];
+}
+
+/** Where a round's queue begins (F45): the teacher's "from here on". */
+export interface QueueStart {
+  round: number;
+  blockId: string;
+  slot: number;
 }
 
 export interface Slot {
@@ -94,6 +104,8 @@ export interface Slot {
   start: string;
   end: string;
   overridden: boolean;
+  /** Struck: drawn crossed out, given to nobody. */
+  skipped: boolean;
 }
 
 function minutes(hhmm: string): number {
@@ -133,6 +145,7 @@ export function expandSlots(block: Block): Slot[] {
     start: hhmm(one.at),
     end: hhmm(starts[i + 1]?.at ?? minutes(bell.end)),
     overridden: one.overridden,
+    skipped: block.skippedSlots.includes(i + 1),
   }));
 }
 
@@ -180,20 +193,32 @@ export interface Scheduled {
  * 4. The queue — every other waiting team, by position — takes the live free
  *    slots in time order. Whoever does not fit has no estimate yet.
  * 5. A finished team has no estimate, as in 2025.
+ *
+ * **A struck slot is given to nobody**, queue or pin. **A round's start**, if
+ * the teacher set one, is where the queue begins: earlier slots are skipped by
+ * the queue even while they are still ahead — and only by the queue, so a pin
+ * before the start still holds. A start naming a slot that no longer exists is
+ * no start, the way `offering_home.unit_order` treats a deleted unit.
  */
 export function schedule(
   blocks: readonly Block[],
   queue: readonly QueueEntry[],
   now: Date = new Date(),
+  starts: readonly QueueStart[] = [],
 ): Map<string, Scheduled> {
   const out = new Map<string, Scheduled>();
   const at = now.getTime();
 
   for (const round of new Set(queue.map((entry) => entry.round))) {
-    const slots = blocks
+    const all = blocks
       .filter((block) => block.round === round)
-      .flatMap(expandSlots)
-      .filter((slot) => instant(slot.date, slot.end) > at)
+      .flatMap(expandSlots);
+    const start = starts.find((one) => one.round === round);
+    const from = all.find(
+      (slot) => slot.blockId === start?.blockId && slot.slot === start?.slot,
+    );
+    const slots = all
+      .filter((slot) => !slot.skipped && instant(slot.date, slot.end) > at)
       .sort((a, b) => instant(a.date, a.start) - instant(b.date, b.start));
     const key = (blockId: string, slot: number) => `${blockId}/${slot}`;
     const live = new Map(
@@ -227,7 +252,10 @@ export function schedule(
     }
 
     const free = slots.filter(
-      (slot) => !taken.has(key(slot.blockId, slot.slot)),
+      (slot) =>
+        !taken.has(key(slot.blockId, slot.slot)) &&
+        (!from ||
+          instant(slot.date, slot.start) >= instant(from.date, from.start)),
     );
     line.forEach((entry, i) => {
       const slot = free[i];
@@ -319,6 +347,7 @@ export async function classBlocks(
 export interface ScheduleRows {
   blocks: Block[];
   queue: (QueueEntry & { projectId: number })[];
+  queueStarts: QueueStart[];
   savedAt: Date | null;
 }
 
@@ -335,6 +364,7 @@ export async function readSchedule(
         block: presentationBlock.block,
         slotCount: presentationBlock.slotCount,
         slotStarts: presentationBlock.slotStarts,
+        skippedSlots: presentationBlock.skippedSlots,
       })
       .from(presentationBlock)
       .where(eq(presentationBlock.offeringHomeId, homeId))
@@ -353,11 +383,19 @@ export async function readSchedule(
       .where(eq(presentation.offeringHomeId, homeId))
       .orderBy(asc(presentation.round), asc(presentation.position)),
     db
-      .select({ savedAt: offeringHome.scheduleSavedAt })
+      .select({
+        savedAt: offeringHome.scheduleSavedAt,
+        queueStarts: offeringHome.queueStarts,
+      })
       .from(offeringHome)
       .where(eq(offeringHome.id, homeId)),
   ]);
-  return { blocks, queue, savedAt: home?.savedAt ?? null };
+  return {
+    blocks,
+    queue,
+    queueStarts: home?.queueStarts ?? [],
+    savedAt: home?.savedAt ?? null,
+  };
 }
 
 /* ── Writing ────────────────────────────────────────────────────────────── */
@@ -372,6 +410,8 @@ export interface ScheduleInput {
     round: number;
     pin: { blockId: string; slot: number } | null;
   }[];
+  /** At most one per round. Absent is "from now". */
+  queueStarts: QueueStart[];
 }
 
 const WEEKDAYS = [
@@ -433,7 +473,12 @@ export async function saveSchedule(
     // which has nothing finer, and comes back to be compared for equality.
     const [saved] = await tx
       .update(offeringHome)
-      .set({ scheduleSavedAt: sql`date_trunc('milliseconds', now())` })
+      .set({
+        scheduleSavedAt: sql`date_trunc('milliseconds', now())`,
+        // In the same statement as the token: the start is part of the
+        // schedule, so a stale body cannot move it either.
+        queueStarts: input.queueStarts,
+      })
       .where(
         and(
           eq(offeringHome.id, homeId),
@@ -489,6 +534,7 @@ export async function saveSchedule(
             block: sql`excluded.block`,
             slotCount: sql`excluded.slot_count`,
             slotStarts: sql`excluded.slot_starts`,
+            skippedSlots: sql`excluded.skipped_slots`,
           },
         });
     }
@@ -612,6 +658,37 @@ function checkAgainst(
         );
       }
     });
+    // Past the count is the one way a struck list goes stale: the count
+    // changed and the client kept the old list. Refused, like a `slotStarts`
+    // of the wrong length, rather than trimmed behind the teacher's back.
+    if (
+      new Set(block.skippedSlots).size !== block.skippedSlots.length ||
+      block.skippedSlots.some((slot) => slot > block.slotCount)
+    ) {
+      throw new ApiError(
+        400,
+        "invalid_body",
+        `Los turnos quitados del ${block.block}° bloque del ${block.date} no coinciden con sus ${block.slotCount} turnos.`,
+      );
+    }
+  }
+
+  const rounds = new Set<number>();
+  for (const start of input.queueStarts) {
+    const block = byId.get(start.blockId);
+    if (
+      rounds.has(start.round) ||
+      !block ||
+      block.round !== start.round ||
+      start.slot > block.slotCount
+    ) {
+      throw new ApiError(
+        400,
+        "invalid_body",
+        "Cada ronda arranca en un turno de sus bloques, y una sola vez.",
+      );
+    }
+    rounds.add(start.round);
   }
 
   const queued = new Set<string>();
@@ -644,6 +721,13 @@ function checkAgainst(
           400,
           "invalid_body",
           "Un grupo está fijado a un turno que no existe en su ronda.",
+        );
+      }
+      if (block.skippedSlots.includes(entry.pin.slot)) {
+        throw new ApiError(
+          400,
+          "invalid_body",
+          `El turno ${entry.pin.slot} del ${block.block}° bloque del ${block.date} está quitado.`,
         );
       }
       const slot = `${entry.pin.blockId}/${entry.pin.slot}`;
@@ -752,6 +836,13 @@ export function checkSchedule(raw: unknown): ScheduleInput {
       });
       if (slotStarts.every((start) => start === null)) slotStarts = null;
     }
+    const skippedSlots = block.skippedSlots ?? [];
+    if (
+      !Array.isArray(skippedSlots) ||
+      !skippedSlots.every((slot) => intIn(slot, 1, MAX_SLOTS))
+    ) {
+      throw invalid("`skippedSlots` es una lista de números de turno.");
+    }
     return {
       id: block.id.toLowerCase(),
       round: block.round,
@@ -759,6 +850,7 @@ export function checkSchedule(raw: unknown): ScheduleInput {
       block: block.block,
       slotCount,
       slotStarts,
+      skippedSlots: [...(skippedSlots as number[])].sort((a, b) => a - b),
     };
   });
 
@@ -785,7 +877,27 @@ export function checkSchedule(raw: unknown): ScheduleInput {
     return { projectId: entry.projectId, round: entry.round, pin };
   });
 
-  return { base, blocks, presentations };
+  const rawStarts = body.queueStarts ?? [];
+  if (!Array.isArray(rawStarts) || rawStarts.length > MAX_ROUNDS) {
+    throw invalid(`\`queueStarts\` es una lista de hasta ${MAX_ROUNDS}.`);
+  }
+  const queueStarts = rawStarts.map((one): QueueStart => {
+    const start = (one ?? {}) as Record<string, unknown>;
+    if (
+      !intIn(start.round, 1, MAX_ROUNDS) ||
+      !isUuid(start.blockId) ||
+      !intIn(start.slot, 1, MAX_SLOTS)
+    ) {
+      throw invalid("Cada `queueStarts` es `{ round, blockId, slot }`.");
+    }
+    return {
+      round: start.round,
+      blockId: start.blockId.toLowerCase(),
+      slot: start.slot,
+    };
+  });
+
+  return { base, blocks, presentations, queueStarts };
 }
 
 export function checkState(raw: unknown): PresentationState {

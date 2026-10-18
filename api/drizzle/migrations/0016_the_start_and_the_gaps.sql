@@ -1,0 +1,2 @@
+ALTER TABLE "campus"."offering_home" ADD COLUMN "queue_starts" jsonb DEFAULT '[]'::jsonb NOT NULL;--> statement-breakpoint
+ALTER TABLE "campus"."presentation_block" ADD COLUMN "skipped_slots" integer[] DEFAULT '{}' NOT NULL;

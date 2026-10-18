@@ -2905,9 +2905,11 @@ test(
               block: 3,
               slotCount: 3,
               slotStarts: null,
+              skippedSlots: [],
             },
           ],
-        ) => ({ base, blocks, presentations });
+          queueStarts = [],
+        ) => ({ base, blocks, presentations, queueStarts });
 
         const first = await saveSchedule(
           db,
@@ -3021,16 +3023,75 @@ test(
           { code: "23505" },
         );
 
-        // Leaving everything out deletes it, through the runtime role's grants.
+        // A struck slot and a round's start round-trip; a pin on the struck
+        // slot, or a struck number past the count, is refused.
+        const struck = (extra = {}) => [
+          {
+            id: fri,
+            round: 1,
+            date: "2027-11-12",
+            block: 3,
+            slotCount: 3,
+            slotStarts: null,
+            skippedSlots: [2],
+            ...extra,
+          },
+        ];
+        const start = [{ round: 1, blockId: fri, slot: 2 }];
+        const third = await saveSchedule(
+          db,
+          home.homeId,
+          ids.optional,
+          2027,
+          body(
+            second,
+            [{ projectId: beta, round: 1, pin: { blockId: fri, slot: 1 } }],
+            struck(),
+            start,
+          ),
+        );
+        rows = await readSchedule(db, home.homeId);
+        assert.deepEqual(rows.blocks[0].skippedSlots, [2]);
+        assert.deepEqual(rows.queueStarts, start);
+        await assert.rejects(
+          saveSchedule(
+            db,
+            home.homeId,
+            ids.optional,
+            2027,
+            body(
+              third,
+              [{ projectId: beta, round: 1, pin: { blockId: fri, slot: 2 } }],
+              struck(),
+            ),
+          ),
+          { code: "invalid_body" },
+          "a pin on a struck slot",
+        );
+        await assert.rejects(
+          saveSchedule(
+            db,
+            home.homeId,
+            ids.optional,
+            2027,
+            body(third, [], struck({ slotCount: 2, skippedSlots: [3] })),
+          ),
+          { code: "invalid_body" },
+          "a struck number past the count",
+        );
+
+        // Leaving everything out deletes it, through the runtime role's grants
+        // — the start included, since an absent `queueStarts` is "from now".
         await saveSchedule(
           db,
           home.homeId,
           ids.optional,
           2027,
-          body(second, [], []),
+          body(third, [], []),
         );
         rows = await readSchedule(db, home.homeId);
         assert.deepEqual([rows.blocks.length, rows.queue.length], [0, 0]);
+        assert.deepEqual(rows.queueStarts, []);
 
         assert.equal(await deactivate(db, ids.optional), true);
       },

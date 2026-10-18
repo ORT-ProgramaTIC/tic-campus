@@ -51,8 +51,8 @@ export function createPresentationRoutes(db: Db): Router {
 
   /**
    * The whole schedule in one read, for both screens: blocks with their slots,
-   * the teams, the queue with each team's estimate, and `mine` for the student
-   * banner. Staff also get `classBlocks` and `bell`, which are what the block
+   * the teams, the queue with each team's estimate, `queueStarts`, and `mine`
+   * for the student banner. Staff also get `classBlocks` and `bell`, which are what the block
    * picker offers — a student has no use for the timetable of a schedule they
    * cannot edit.
    *
@@ -87,7 +87,12 @@ export function createPresentationRoutes(db: Db): Router {
           can.manageOffering ? classBlocks(db, offeringId) : null,
         ]);
         const names = new Map(teams.map((team) => [team.projectId, team.name]));
-        const placed = schedule(rows.blocks, rows.queue);
+        const placed = schedule(
+          rows.blocks,
+          rows.queue,
+          new Date(),
+          rows.queueStarts,
+        );
         res.status(200).json({
           blocks: rows.blocks.map((block) => ({
             ...block,
@@ -110,6 +115,7 @@ export function createPresentationRoutes(db: Db): Router {
             ...placed.get(entry.id),
           })),
           mine,
+          queueStarts: rows.queueStarts,
           savedAt: rows.savedAt,
           ...(modules ? { classBlocks: modules, bell: BELL } : {}),
         });

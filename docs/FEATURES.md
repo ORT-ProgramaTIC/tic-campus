@@ -1554,6 +1554,20 @@ student_id, recorded_at DESC)`; `saveOfficialGrades` inserts, and it has to,
     loaded, and a stale one is `409 stale_schedule`. State is a separate `PATCH` that does
     not move `savedAt`, so flipping a team to "presentando" during a presentation never
     stales an open dashboard — which is also why the `PUT` never writes state.
+  - **A slot can be struck on a date**, for an event that takes it. It keeps its number and
+    time — the slots after it do not renumber, so a pin on slot 3 still means slot 3 — and is
+    given to nobody, queue or pin. Changing a block's slot count is the one way the struck list
+    goes stale, and the save refuses a number past the count rather than trimming it; clearing
+    it on a count change is the editor's job, as it already is for the time overrides.
+  - **Each round can start the queue at a slot the teacher picks** ("from here on"). The queue
+    skips every slot before it, even ones still ahead; pins do not, so a team can be pinned
+    before the start. A team whose pin was missed rejoins after the start like anyone else.
+    Stored on `offering_home` as ids with no foreign key, `unit_order`'s argument: one `PUT`
+    writes the blocks and the starts together, and a start naming a block that is gone reads
+    as "from now".
+  - **Special dates are pins inside class blocks**, not a block kind of their own, and the
+    queue may fill a special block's spare slots. Decided 2026-10-18, when both alternatives
+    were offered and declined.
   - **No year lock.** F35 locks marks; this is not one.
   - **Deferred:** a bell item when a team's estimate moves (F30), a cross-offering view, and
     member lists.

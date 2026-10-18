@@ -120,6 +120,14 @@ export const offeringHome = campus.table(
      *  carries back, F12's `baseVersionId` for a body with no version of its
      *  own. Null is "never saved". A state change does not move it. */
     scheduleSavedAt: timestamp("schedule_saved_at", { withTimezone: true }),
+    /** Where each round's queue begins (F45), at most one per round. Ids of
+     *  `presentation_block` inside jsonb, with no foreign key — `unitOrder`'s
+     *  argument: the same `PUT` writes the blocks and this, and a start naming
+     *  a block that is gone matches nothing and reads as "from now". */
+    queueStarts: jsonb("queue_starts")
+      .$type<{ round: number; blockId: string; slot: number }[]>()
+      .notNull()
+      .default([]),
   },
   // Total, never partial: `ON CONFLICT (offering_id)` needs this as its target,
   // and a `WHERE archived_at IS NULL` index is not one.
