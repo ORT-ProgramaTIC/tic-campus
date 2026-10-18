@@ -16,14 +16,10 @@ import type {
   PresentationsPayload,
   PresentationState,
 } from "./api/types.ts";
-import {
-  blockLabel,
-  formatDay,
-  roundLabel,
-  STATE_LABEL,
-  STATE_TONE,
-} from "./labels.ts";
+import { blockLabel, formatDay, roundLabel } from "./labels.ts";
 import { useOffering } from "./router.tsx";
+import { Timetable } from "./timetable.tsx";
+import { StateChip } from "./ui.tsx";
 
 /** The student page: who you are, and when your team presents. */
 export function Presentaciones() {
@@ -47,7 +43,10 @@ export function Presentaciones() {
       ) : query.isError ? (
         <Notice>{query.error.message}</Notice>
       ) : (
-        <Banners data={query.data} staff={offering.can.manageOffering} />
+        <>
+          <Banners data={query.data} staff={offering.can.manageOffering} />
+          <Timetable data={query.data} />
+        </>
       )}
     </div>
   );
@@ -110,9 +109,9 @@ function TeamBanner({
     <section className="rounded-3xl border border-line bg-card p-6 sm:p-8">
       <div className="flex flex-wrap items-center gap-4">
         <Circle icon={Users} tone="bg-lilac-50 text-lilac-700" />
-        <div className="mr-auto">
+        <div className="mr-auto min-w-40 flex-1">
           <p className="text-sm text-ink-muted">Tu grupo</p>
-          <h2 className="text-2xl font-semibold">{row.name ?? "—"}</h2>
+          <h2 className="truncate text-2xl font-semibold">{row.name ?? "—"}</h2>
         </div>
         <div className="flex items-center gap-2">
           <span className="rounded-full bg-canvas px-3 py-1 text-sm text-ink-muted">
@@ -180,16 +179,6 @@ function Note({ row, finished }: { row: Presentation; finished: boolean }) {
   return line(
     Info,
     "Es una estimación: se mueve si otros grupos presentan antes, o no presentan.",
-  );
-}
-
-export function StateChip({ state }: { state: PresentationState }) {
-  return (
-    <span
-      className={`rounded-full px-3 py-1 text-sm font-medium ring-1 ring-inset ${STATE_TONE[state]}`}
-    >
-      {STATE_LABEL[state]}
-    </span>
   );
 }
 

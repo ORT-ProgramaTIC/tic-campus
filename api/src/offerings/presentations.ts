@@ -13,6 +13,7 @@ import {
   directoryOfferingTimeSlot,
   directoryProject,
   directoryProjectMember,
+  directoryUser,
 } from "../db/schema/directory.js";
 import { offeringHome } from "../db/schema/offering-home.js";
 import { presentation, presentationBlock } from "../db/schema/presentation.js";
@@ -270,9 +271,17 @@ export function schedule(
 
 /* ── Reads ──────────────────────────────────────────────────────────────── */
 
+export interface Member {
+  name: string | null;
+  surname: string | null;
+  /** The discipline (Backend, UX/UI…), as tic-registry writes it. */
+  track: string;
+}
+
 export interface Team {
   projectId: number;
   name: string;
+  members: Member[];
 }
 
 /**
@@ -280,20 +289,32 @@ export interface Team {
  * offering. **The only reader of `directory.project`** — `project_offering` is
  * not published, so `project_member.offering_id` is the one road from an
  * offering to its projects, and a project nobody has joined is not on it.
+ *
+ * With its members' names — not `email` or `dni`. Everyone reading this is
+ * signed in and in the offering, and the timetable's popup shows who is in
+ * each slot, so a student sees the other teams' members too (decided
+ * 2026-10-18).
  */
 export async function offeringTeams(
   db: Db,
   offeringId: number,
 ): Promise<Team[]> {
-  return db
-    .selectDistinct({
+  const rows = await db
+    .select({
       projectId: directoryProject.id,
-      name: directoryProject.name,
+      team: directoryProject.name,
+      name: directoryUser.name,
+      surname: directoryUser.surname,
+      track: directoryProjectMember.track,
     })
     .from(directoryProjectMember)
     .innerJoin(
       directoryProject,
       eq(directoryProject.id, directoryProjectMember.projectId),
+    )
+    .innerJoin(
+      directoryUser,
+      eq(directoryUser.id, directoryProjectMember.userId),
     )
     .where(
       and(
@@ -301,7 +322,27 @@ export async function offeringTeams(
         isNull(directoryProject.archivedAt),
       ),
     )
-    .orderBy(asc(directoryProject.name), asc(directoryProject.id));
+    .orderBy(
+      asc(directoryProject.name),
+      asc(directoryProject.id),
+      asc(directoryUser.surname),
+      asc(directoryUser.name),
+    );
+
+  const teams = new Map<number, Team>();
+  for (const row of rows) {
+    let team = teams.get(row.projectId);
+    if (!team) {
+      team = { projectId: row.projectId, name: row.team, members: [] };
+      teams.set(row.projectId, team);
+    }
+    team.members.push({
+      name: row.name,
+      surname: row.surname,
+      track: row.track,
+    });
+  }
+  return [...teams.values()];
 }
 
 /** The caller's own teams here — the student banner's "your group". A list,

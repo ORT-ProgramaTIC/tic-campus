@@ -120,9 +120,18 @@ export interface Presentation {
   pinMissed: boolean;
 }
 
+export interface Member {
+  name: string | null;
+  surname: string | null;
+  /** tic-registry's slug (`ux-ui`); `trackLabel` reads it. */
+  track: string;
+}
+
 export interface Team {
   projectId: number;
   name: string;
+  /** By surname. Every signed-in reader sees every team's. */
+  members: Member[];
 }
 
 export interface QueueStart {

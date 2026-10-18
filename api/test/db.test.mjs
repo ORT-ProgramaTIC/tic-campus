@@ -2883,10 +2883,16 @@ test(
           [ids.optional],
         );
 
+        const teams = await offeringTeams(db, ids.optional);
         assert.deepEqual(
-          (await offeringTeams(db, ids.optional)).map((team) => team.name),
+          teams.map((team) => team.name),
           ["Alfa", "Beta"],
           "an archived project is not a team",
+        );
+        assert.deepEqual(
+          teams[1].members,
+          [{ name: "Fede", surname: "Alumne", track: "backend" }],
+          "members by name, through directory.user, and nothing else of theirs",
         );
         assert.deepEqual(
           (await myTeams(db, ids.optional, ids.student)).sort(),

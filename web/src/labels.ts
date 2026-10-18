@@ -38,5 +38,28 @@ export function formatDay(date: string): string {
 /** `1` → `1ª ronda`. */
 export const roundLabel = (round: number) => `${round}ª ronda`;
 
-/** `3` → `3° bloque`. */
-export const blockLabel = (block: number) => `${block}° bloque`;
+const ORDINAL = ["", "1er", "2do", "3er", "4to", "5to", "6to"];
+
+/** `3` → `3er bloque`. */
+export const blockLabel = (block: number) =>
+  `${ORDINAL[block] ?? `${block}°`} bloque`;
+
+/**
+ * A member's track as people read it. Copied from tic-registry's
+ * `PROJECT_TRACK_LABELS` (`tic_directory/models/enums.py`), which the
+ * directory view does not publish; a track added there shows as its slug
+ * here until this catches up.
+ */
+const TRACK_LABEL: Record<string, string> = {
+  backend: "Backend",
+  frontend: "Frontend",
+  fullstack: "Fullstack",
+  timi: "TIMI",
+  ia: "IA",
+  "videojuegos-desarrollo": "Desarrollo de Videojuegos",
+  "videojuegos-arte": "Arte de Videojuegos",
+  "ux-ui": "UX/UI",
+  hardware: "Hardware",
+};
+
+export const trackLabel = (track: string) => TRACK_LABEL[track] ?? track;

@@ -577,7 +577,8 @@ PATCH  /api/homes/:oferta/presentations/:id/state       staff     el estado de u
 **A team is a tic-registry project** — there is no team entity upstream, and campus stores no
 membership. An offering's teams are the live projects with a member who is here through it
 (`directory.project_member.offering_id`); a project nobody joined is not on the list, and that
-is a row to add in tic-registry, not here. **A block is only one the class meets in**: its date
+is a row to add in tic-registry, not here. Each team carries its members' name, surname and
+track (not email or DNI), and every reader of the page gets every team's. **A block is only one the class meets in**: its date
 and number must match a row of `directory.offering_time_slot`, or the save is
 `400 not_a_class_block`. A block splits into three slots by default, evenly across `BELL`
 (`api/src/offerings/presentations.ts`); the count and any slot's start can be changed.

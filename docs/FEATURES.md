@@ -1519,6 +1519,9 @@ student_id, recorded_at DESC)`; `saveOfficialGrades` inserts, and it has to,
     An offering's teams are the projects with a member whose `offering_id` is that offering,
     because `project_offering` is not published — so a project nobody has joined is not
     schedulable, and that is a tic-registry row to add.
+  - **Every reader sees every team's members** — name, surname and track, never email or
+    DNI. The page is signed-in only and its readers are the offering's own students and
+    teachers, and the timetable's popup is "who presents in this slot" (decided 2026-10-18).
   - **Rotation is the offering.** 2025's `Rotación` column (AB/CD) existed because one sheet
     served two groups of courses. In the directory each rotation is already its own offering
     (2026: 51 is NR4A + NR4C, 52 is NR4B + NR4D), so each home has its own schedule and
