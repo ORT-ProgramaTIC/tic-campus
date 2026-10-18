@@ -14,6 +14,7 @@ export * from "./notification-read.js";
 export * from "./offering-article.js";
 export * from "./offering-home.js";
 export * from "./official-grade.js";
+export * from "./presentation.js";
 export * from "./program-unit.js";
 export * from "./redo-covers.js";
 export * from "./result.js";

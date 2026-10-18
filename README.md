@@ -56,10 +56,10 @@ the host by `make migrate` and never enters a container.
 of the secrets: it sets no `USER`, so root is the uid that opens them. Adding one means
 chowning both in the same commit (`../DEPLOY-CONVENTIONS.md` §4).
 
-Campus owns sixteen tables so far — the article library, the program units, the two the
+Campus owns eighteen tables so far — the article library, the program units, the two the
 login needs, `offering_home` and `offering_article`, the gradebook's four, `result`,
-`official_grade`, `redo_covers` and `revision_request` (`api/src/db/schema/`,
-`docs/FEATURES.md` F37). The barrel `api/src/db/schema/index.ts` is the list: a table
+`official_grade`, `redo_covers`, `revision_request` and F45's `presentation_block` and
+`presentation` (`api/src/db/schema/`, `docs/FEATURES.md` F37, F45). The barrel `api/src/db/schema/index.ts` is the list: a table
 missing from it is one nothing creates and nothing grants. Schema changes are Drizzle
 migrations:
 
@@ -215,7 +215,7 @@ The database is `make test-db`'s recipe with the container left running: the rol
 cluster-wide, so throw it away afterwards or the next run fails on
 `role "campus" already exists`.
 
-`api/scripts/harness-redos.mjs`, `harness-revisions.mjs`, `harness-history.mjs`, `harness-home.mjs` and `harness-lock.mjs` are that whole setup
+`api/scripts/harness-redos.mjs`, `harness-revisions.mjs`, `harness-history.mjs`, `harness-home.mjs`, `harness-lock.mjs` and `harness-presentations.mjs` are that whole setup
 written down — container, migrate, seed, sessions, api — with one slice's assertions on the
 end. `node scripts/harness-revisions.mjs` from inside `api/`, and it removes its container
 either way. **Copy one and replace the assertions** rather than writing the scaffolding
@@ -223,7 +223,8 @@ again: the four things that cost time are in the preamble, and the sharpest is t
 must be spawned _after_ the migrate and the seed, or its pool points at a database with no
 schema and the symptom is an `ECONNREFUSED` that reads like a port problem. Give a new one
 its **own container name and port** — 55432 is `tic-ai-postgres`'s, 55433 is `make
-test-db`'s, 55439, 55440, 55441, 55442 and 55443 are these five.
+test-db`'s, and 55439 through 55446 are the harnesses' — `harness-notifications.mjs` and
+`harness-import.mjs` hold 55444 and 55445, `harness-presentations.mjs` 55446.
 
 The revisions one is worth reading before any student-facing route: it is the only thing
 that exercises `csrf_failed` and `no_session` on a **student** write, which nothing in
@@ -555,6 +556,45 @@ first write in production. `api/test/db.test.mjs` is the only place that ever ex
 one: every call there goes through `campus_svc`, and a read proves nothing — the slice-7
 subtests insert, update and delete against each of the five new tables for exactly that
 reason.
+
+## Las presentaciones
+
+The order an offering's teams present in, and when each one is expected to (F45) — 2025's
+`campus-proyecto`, on rows instead of two Google Sheets. **It ships alone, for the 2026
+Proyecto presentations**, ahead of everything else here.
+
+```
+GET    /api/homes/:oferta/presentations                 sesión    bloques, turnos, grupos, la cola con su estimación, `mine` (F45)
+PUT    /api/homes/:oferta/presentations                 staff     el cronograma entero: bloques, turnos, orden y fijados
+PATCH  /api/homes/:oferta/presentations/:id/state       staff     el estado de un grupo, el día que presenta
+```
+
+**A team is a tic-registry project** — there is no team entity upstream, and campus stores no
+membership. An offering's teams are the live projects with a member who is here through it
+(`directory.project_member.offering_id`); a project nobody joined is not on the list, and that
+is a row to add in tic-registry, not here. **A block is only one the class meets in**: its date
+and number must match a row of `directory.offering_time_slot`, or the save is
+`400 not_a_class_block`. A block splits into three slots by default, evenly across `BELL`
+(`api/src/offerings/presentations.ts`); the count and any slot's start can be changed.
+
+**The estimate is derived on every read**, as marks are. Pinned teams hold their slot while it
+is live; everyone else waiting takes the next free slot in queue order; a pin whose slot ended
+with the team still waiting **falls back into the queue**, flagged `pinMissed`. A slot is live
+until it ends, so a team presenting right now keeps the one it is in.
+
+Three rules worth knowing before writing a client:
+
+- **The `PUT` deletes by omission** — the opposite of `PUT …/program`. Safe here because
+  nothing points at these rows except the pins the same body rewrites. Two teachers get F12's
+  answer: send back the `savedAt` you loaded as `base`, and a stale one is `409
+stale_schedule`.
+- **State is not in the `PUT`.** It is the `PATCH`, which does not move `savedAt`, so flipping
+  a team to "presentando" never stales an open dashboard and an old tab's save never undoes it.
+- **Block ids come from the client** (`crypto.randomUUID()`), because a team can be pinned to a
+  block created in the same body.
+
+Signed-in only: staff of the offering and its enrolled students; anyone else is a `403`. No year
+lock — F35 locks marks.
 
 ## Doctor
 

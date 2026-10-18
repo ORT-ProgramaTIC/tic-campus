@@ -1,15 +1,18 @@
 {
-  "generatedAt": "2026-09-20T13:19:58+00:00",
-  "upstreamRepo": "/home/julianzylber/Documents/ORT/VM/tic-auth",
-  "upstreamRevision": "1725f6bbb40f9b351fe73ef1ecb4d11e858f881c",
+  "generatedAt": "2026-10-18T04:30:24+00:00",
+  "upstreamRepo": "/home/julianzylber/Documents/ORT/VM/tic-registry",
+  "upstreamRevision": "836bfa25f65e65613de081b9cef478b3d9cab3a3",
   "views": [
     "user",
     "course",
     "subject",
     "offering",
     "enrollment",
+    "project",
+    "project_member",
     "teacher_offering",
-    "offering_course"
+    "offering_course",
+    "offering_time_slot"
   ],
   "baseTables": [
     "academic_year",
@@ -18,17 +21,22 @@
     "course",
     "term",
     "offering",
+    "project",
     "student_course",
     "offering_course",
+    "offering_time_slot",
+    "project_offering",
     "teacher_offering",
+    "project_member",
     "student_offering"
   ],
   "sourceHashes": {
-    "tic_auth/models/contract.py": "15d630c30ba377663b83d0e98bb2488f3d04539b6fae3b1808037a65027f6e97",
-    "tic_auth/models/directory.py": "e943eac55aa5d23478f9fad584bdf3f668b5286e1d50c7144aa049aa7f041954",
-    "tic_auth/models/identity.py": "76ae62658315f032dfedbb3b9a6cb6897216cf8f18bebc2780f2e40ea0bf58a4",
-    "tic_auth/models/base.py": "4743eaad8781210e3911fcf92f94517481197c31efc2cf173b9f486855813e34",
-    "tic_auth/models/enums.py": "f7d71cd0d217c88057221b462cfb3e6b6671938c7c256d5f1e7ef64290c87f3d",
-    "tic_auth/settings_db.py": "8501d5ea459692253eb9675e8b9de923982ce9c10b71a1c23eef71fa0dd0c173"
+    "tic_directory/models/contract.py": "e497956f50047fe6863fb493ca3e9e57176182e3addafe045960aa41ff85f4b0",
+    "tic_directory/models/directory.py": "90aead211e1cfee2a290c0c9ec9c87cde54df205b4094b74a309b362b4365ed4",
+    "tic_directory/models/identity.py": "e6216374fff2d01165f944a410d971403bf0060fd55cd6ccc7bb28fef40c07da",
+    "tic_directory/models/base.py": "4743eaad8781210e3911fcf92f94517481197c31efc2cf173b9f486855813e34",
+    "tic_directory/models/enums.py": "f7d71cd0d217c88057221b462cfb3e6b6671938c7c256d5f1e7ef64290c87f3d",
+    "tic_directory/models/project.py": "490161c37ea680473a0e88b08e876d0a76a9a75ca245c47dc807f91c241a83a0",
+    "tic_directory/settings_db.py": "f3d03402cc62c406570319847ee1296c2fd035099ba78c9cac6079756c42efb4"
   }
 }

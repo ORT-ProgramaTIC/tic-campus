@@ -1,7 +1,7 @@
-"""Emit the slice of tic-auth's schema that tic-campus's database tests stand in for.
+"""Emit the slice of tic-registry's schema (tic-auth's until the 2026-09-22 split) that tic-campus's database tests stand in for.
 
 **Run by `gen-directory-standins.mjs`, never by the test suite.** The suite reads the
-committed `.sql` this produces, so a laptop with no Python and no tic-auth checkout can
+committed `.sql` this produces, so a laptop with no Python and no tic-registry checkout can
 still run `make test-db`. Only *regenerating* needs this file.
 
 Why generate rather than hand-write: campus's tables carry real foreign keys into
@@ -32,16 +32,16 @@ from sqlalchemy import Table
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.schema import CreateTable
 
-# Ahead of the tic_auth imports, so a repo passed on the command line wins over whatever
+# Ahead of the tic_directory imports, so a repo passed on the command line wins over whatever
 # the interpreter would otherwise find. It does not always win — see `assert_importing_from`.
 if len(sys.argv) == 2:
     sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
 
-from tic_auth.models.base import Base
-from tic_auth.models.contract import DIRECTORY_SCHEMA, DIRECTORY_VIEWS
-from tic_auth.models.directory import ENROLLMENT_VIEW_SQL
+from tic_directory.models.base import Base
+from tic_directory.models.contract import DIRECTORY_SCHEMA, DIRECTORY_VIEWS
+from tic_directory.models.directory import ENROLLMENT_VIEW_SQL
 
-# The seven views campus reads (`api/src/db/schema/directory.ts`). Named one by one and
+# The views campus reads (`api/src/db/schema/directory.ts`). Named one by one and
 # not taken from `DIRECTORY_VIEWS` wholesale, and that is the point: `0005`'s
 # ALTER DEFAULT PRIVILEGES grants campus_app every future view in that schema whether
 # campus wanted it or not, so the list of what campus *reads* has to be campus's own.
@@ -49,9 +49,13 @@ from tic_auth.models.directory import ENROLLMENT_VIEW_SQL
 # Absent on purpose: `user_role`, because the token already says whether somebody is a
 # student and a second source of one fact is how the two disagree; `student_course`,
 # because campus asks about offerings and never about course membership;
-# `offering_time_slot` and `time_slot_teacher`, which are F14's timetable and carry the
-# override rule campus has not implemented yet; `project` and `project_member`, which are
-# tic-host's and would drag their tables and enums in behind them for no reader.
+# `time_slot_teacher`, which carries the per-module teacher override campus has not
+# implemented yet.
+#
+# Three were absent until F45. `project` and `project_member`, as tic-host's alone: a
+# project *is* its team (tic-registry `docs/SCHEMA.md`), and the presentation schedule
+# orders teams. `offering_time_slot`, because a presentation block must be one of the
+# offering's own weekly modules — campus reads the modules, never the teacher override.
 CAMPUS_VIEWS: tuple[str, ...] = (
     "user",
     "course",
@@ -60,9 +64,12 @@ CAMPUS_VIEWS: tuple[str, ...] = (
     "offering_course",
     "teacher_offering",
     "enrollment",
+    "project",
+    "project_member",
+    "offering_time_slot",
 )
 
-# Where the closure below starts: every base table those seven views select from, named
+# Where the closure below starts: every base table those views select from, named
 # because a view's SQL is text and walking it would be guesswork. The closure then follows
 # outgoing foreign keys, so a column tic-auth adds a reference to comes along by itself.
 SEED_TABLES: tuple[str, ...] = (
@@ -79,17 +86,23 @@ SEED_TABLES: tuple[str, ...] = (
     # published on its own.
     "student_course",
     "student_offering",
+    # F45. `project_offering` is not published and comes along by the closure, because
+    # `project_member`'s composite foreign key names it.
+    "project",
+    "project_member",
+    "offering_time_slot",
 )
 
 # Hashed into the provenance file so `db:stubs:check` can tell "nobody regenerated" from
 # "nothing changed" without needing Python to answer it.
 UPSTREAM_SOURCES: tuple[str, ...] = (
-    "tic_auth/models/contract.py",
-    "tic_auth/models/directory.py",
-    "tic_auth/models/identity.py",
-    "tic_auth/models/base.py",
-    "tic_auth/models/enums.py",
-    "tic_auth/settings_db.py",
+    "tic_directory/models/contract.py",
+    "tic_directory/models/directory.py",
+    "tic_directory/models/identity.py",
+    "tic_directory/models/base.py",
+    "tic_directory/models/enums.py",
+    "tic_directory/models/project.py",
+    "tic_directory/settings_db.py",
 )
 
 DIALECT = postgresql.dialect()
@@ -109,7 +122,7 @@ def base_tables() -> list[Table]:
         # thing it stands in for.
         raise SystemExit(
             f"tic-auth no longer defines {missing}. The seed list in this script is stale — "
-            f"reconcile it against tic_auth/models/ before regenerating."
+            f"reconcile it against tic_directory/models/ before regenerating."
         )
 
     wanted: set[str] = set()
@@ -182,7 +195,7 @@ def assert_importing_from(repo: Path) -> None:
     """Refuse to generate from a repo other than the one named on the command line.
 
     tic-auth is installed into its own venv as an **editable** install, and
-    `_editable_impl_tic_auth.pth` pins `import tic_auth` to one absolute path. So pointing
+    `_editable_impl_tic_directory.pth` pins `import tic_directory` to one absolute path. So pointing
     this script at a second checkout silently reads the first one instead — the generated
     SQL describes a repo nobody asked about, and the only visible symptom is a drift check
     that reports the hashes moved while the SQL did not. Measured, not hypothetical: that
@@ -191,10 +204,10 @@ def assert_importing_from(repo: Path) -> None:
     For the ordinary case (one checkout, beside this repo) the paths agree and this is a
     no-op. It exists for the case where they do not.
     """
-    imported = Path(Base.__module__ and sys.modules["tic_auth"].__file__ or "").resolve().parent.parent
+    imported = Path(Base.__module__ and sys.modules["tic_directory"].__file__ or "").resolve().parent.parent
     if imported != repo.resolve():
         raise SystemExit(
-            f"refusing to generate: asked for {repo.resolve()}, but `import tic_auth` "
+            f"refusing to generate: asked for {repo.resolve()}, but `import tic_directory` "
             f"resolved to {imported}.\n"
             f"tic-auth is an editable install, so its .pth file pins the import to one "
             f"absolute path regardless of sys.path or cwd.\n"
@@ -234,7 +247,7 @@ def render(repo: Path) -> tuple[str, dict]:
         "",
         f"CREATE SCHEMA {DIRECTORY_SCHEMA};",
         "",
-        "-- The contract views, verbatim from tic_auth/models/contract.py.",
+        "-- The contract views, verbatim from tic_directory/models/contract.py.",
     ]
 
     wanted_views = set(CAMPUS_VIEWS)
@@ -264,7 +277,7 @@ def render(repo: Path) -> tuple[str, dict]:
 
 def main() -> int:
     if len(sys.argv) != 2:
-        print("usage: directory-standins.py <tic-auth repo root>", file=sys.stderr)
+        print("usage: directory-standins.py <tic-registry repo root>", file=sys.stderr)
         return 2
     repo = Path(sys.argv[1]).resolve()
     sql, provenance = render(repo)

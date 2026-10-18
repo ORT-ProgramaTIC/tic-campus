@@ -21,11 +21,21 @@ import { ApiError } from "../middleware/errors.js";
  * a teacher's choice for one offering, so the domain holds only what a home
  * renders and they arrive with their own readers.
  */
-export const SECTIONS = ["program", "articles", "links", "marks"] as const;
+export const SECTIONS = [
+  "program",
+  "articles",
+  "links",
+  "marks",
+  "presentations",
+] as const;
 export type Section = (typeof SECTIONS)[number];
 
-/** What an offering nobody configured shows — `sections` null reads as this. */
-export const DEFAULT_SECTIONS: readonly Section[] = SECTIONS;
+/** What an offering nobody configured shows — `sections` null reads as this.
+ *  Everything but F45's `presentations`, which only an offering that runs a
+ *  presentation schedule wants, so a teacher turns it on. */
+export const DEFAULT_SECTIONS: readonly Section[] = SECTIONS.filter(
+  (section) => section !== "presentations",
+);
 
 export interface HomeConfig {
   sections: Section[];

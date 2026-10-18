@@ -6,8 +6,11 @@
 -- has none of it and the migrations would not apply (F31, docs/FEATURES.md Group J).
 
 -- Enum types, named by the columns below.
+CREATE TYPE ad_sync_state AS ENUM ('pending', 'running', 'done', 'failed');
 CREATE TYPE offering_kind AS ENUM ('mandatory', 'optional');
+CREATE TYPE project_track AS ENUM ('backend', 'frontend', 'fullstack', 'timi', 'ia', 'videojuegos-desarrollo', 'videojuegos-arte', 'ux-ui', 'hardware');
 CREATE TYPE term_kind AS ENUM ('first', 'second', 'full');
+CREATE TYPE weekday AS ENUM ('monday', 'tuesday', 'wednesday', 'thursday', 'friday');
 
 -- Base tables, in dependency order.
 CREATE TABLE academic_year (
@@ -72,6 +75,25 @@ CREATE TABLE offering (
 	CONSTRAINT fk_offering_subject_id FOREIGN KEY(subject_id) REFERENCES subject (id), 
 	CONSTRAINT fk_offering_term_id FOREIGN KEY(term_id) REFERENCES term (id)
 );
+CREATE TABLE project (
+	id SERIAL NOT NULL, 
+	term_id INTEGER NOT NULL, 
+	name VARCHAR(120) NOT NULL, 
+	slug VARCHAR(60) NOT NULL, 
+	created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	archived_at TIMESTAMP WITH TIME ZONE, 
+	ad_group_name VARCHAR(20) NOT NULL, 
+	ad_group_dn VARCHAR(1024), 
+	ad_sync_state ad_sync_state DEFAULT 'pending' NOT NULL, 
+	ad_synced_at TIMESTAMP WITH TIME ZONE, 
+	ad_sync_error TEXT, 
+	CONSTRAINT pk_project PRIMARY KEY (id), 
+	CONSTRAINT uq_project_id_term_id UNIQUE (id, term_id), 
+	CONSTRAINT ck_project_name_not_empty CHECK (btrim(name) <> ''), 
+	CONSTRAINT fk_project_term_id FOREIGN KEY(term_id) REFERENCES term (id), 
+	CONSTRAINT uq_project_ad_group_name UNIQUE (ad_group_name), 
+	CONSTRAINT uq_project_ad_group_dn UNIQUE (ad_group_dn)
+);
 CREATE TABLE student_course (
 	id SERIAL NOT NULL, 
 	student_id INTEGER NOT NULL, 
@@ -90,6 +112,27 @@ CREATE TABLE offering_course (
 	CONSTRAINT fk_offering_course_offering_id FOREIGN KEY(offering_id) REFERENCES offering (id), 
 	CONSTRAINT fk_offering_course_course_id FOREIGN KEY(course_id) REFERENCES course (id)
 );
+CREATE TABLE offering_time_slot (
+	id SERIAL NOT NULL, 
+	offering_id INTEGER NOT NULL, 
+	day weekday NOT NULL, 
+	slot INTEGER NOT NULL, 
+	classroom VARCHAR(60), 
+	CONSTRAINT pk_offering_time_slot PRIMARY KEY (id), 
+	CONSTRAINT uq_offering_time_slot_offering_id_day_slot UNIQUE (offering_id, day, slot), 
+	CONSTRAINT uq_offering_time_slot_id_offering_id UNIQUE (id, offering_id), 
+	CONSTRAINT fk_offering_time_slot_offering_id FOREIGN KEY(offering_id) REFERENCES offering (id)
+);
+CREATE TABLE project_offering (
+	id SERIAL NOT NULL, 
+	project_id INTEGER NOT NULL, 
+	term_id INTEGER NOT NULL, 
+	offering_id INTEGER NOT NULL, 
+	CONSTRAINT pk_project_offering PRIMARY KEY (id), 
+	CONSTRAINT uq_project_offering_project_id_offering_id UNIQUE (project_id, offering_id), 
+	CONSTRAINT in_term FOREIGN KEY(project_id, term_id) REFERENCES project (id, term_id), 
+	CONSTRAINT same_term FOREIGN KEY(offering_id, term_id) REFERENCES offering (id, term_id)
+);
 CREATE TABLE teacher_offering (
 	id SERIAL NOT NULL, 
 	teacher_id INTEGER NOT NULL, 
@@ -98,6 +141,20 @@ CREATE TABLE teacher_offering (
 	CONSTRAINT uq_teacher_offering_teacher_id_offering_id UNIQUE (teacher_id, offering_id), 
 	CONSTRAINT fk_teacher_offering_teacher_id FOREIGN KEY(teacher_id) REFERENCES "user" (id), 
 	CONSTRAINT fk_teacher_offering_offering_id FOREIGN KEY(offering_id) REFERENCES offering (id)
+);
+CREATE TABLE project_member (
+	id SERIAL NOT NULL, 
+	project_id INTEGER NOT NULL, 
+	offering_id INTEGER NOT NULL, 
+	user_id INTEGER NOT NULL, 
+	course_id INTEGER NOT NULL, 
+	track project_track NOT NULL, 
+	joined_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, 
+	CONSTRAINT pk_project_member PRIMARY KEY (id), 
+	CONSTRAINT uq_project_member_project_id_user_id UNIQUE (project_id, user_id), 
+	CONSTRAINT works_under FOREIGN KEY(project_id, offering_id) REFERENCES project_offering (project_id, offering_id), 
+	CONSTRAINT enrolled_via FOREIGN KEY(user_id, course_id) REFERENCES student_course (student_id, course_id), 
+	CONSTRAINT eligible FOREIGN KEY(offering_id, course_id) REFERENCES offering_course (offering_id, course_id)
 );
 CREATE TABLE student_offering (
 	id SERIAL NOT NULL, 
@@ -131,7 +188,7 @@ CREATE VIEW enrollment AS
 
 CREATE SCHEMA directory;
 
--- The contract views, verbatim from tic_auth/models/contract.py.
+-- The contract views, verbatim from tic_directory/models/contract.py.
 CREATE VIEW directory."user" AS
     SELECT u.id,
            u.dni,
@@ -174,6 +231,29 @@ CREATE VIEW directory.enrollment AS
            e.offering_id,
            e.via
       FROM public.enrollment e;
+CREATE VIEW directory.project AS
+    SELECT p.id,
+           p.term_id,
+           p.name,
+           p.slug,
+           p.ad_group_name,
+           p.created_at,
+           p.archived_at,
+           t.academic_year_id,
+           ay.year,
+           ay.is_current
+      FROM public.project p
+      JOIN public.term t           ON t.id = p.term_id
+      JOIN public.academic_year ay ON ay.id = t.academic_year_id;
+CREATE VIEW directory.project_member AS
+    SELECT pm.id,
+           pm.project_id,
+           pm.offering_id,
+           pm.user_id,
+           pm.course_id,
+           pm.track,
+           pm.joined_at
+      FROM public.project_member pm;
 CREATE VIEW directory.teacher_offering AS
     SELECT t.id,
            t.teacher_id,
@@ -184,3 +264,10 @@ CREATE VIEW directory.offering_course AS
            oc.offering_id,
            oc.course_id
       FROM public.offering_course oc;
+CREATE VIEW directory.offering_time_slot AS
+    SELECT s.id,
+           s.offering_id,
+           s.day,
+           s.slot,
+           s.classroom
+      FROM public.offering_time_slot s;

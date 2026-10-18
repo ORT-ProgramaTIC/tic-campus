@@ -89,6 +89,13 @@ import {
   resolveBySlug,
 } from "../dist/offerings/catalog.js";
 import {
+  myTeams,
+  offeringTeams,
+  readSchedule,
+  saveSchedule,
+  setState,
+} from "../dist/offerings/presentations.js";
+import {
   applyCampusRoles,
   applyDirectoryStandins,
   urlFor,
@@ -2817,6 +2824,215 @@ test(
             ],
           );
         }
+      },
+    );
+
+    await t.test(
+      "a presentation schedule: teams from the directory, one save, states apart (F45)",
+      async () => {
+        // On the Proyecto offering, activated here and archived at the end so
+        // the admin listing below still sees it as never activated.
+        assert.equal(await activate(db, ids.optional, ids.admin), true);
+        const home = await activeHome(db, ids.optional);
+
+        const one = async (sql, values) =>
+          (await root.query(sql, values)).rows[0];
+        const project = async (name, slug, adGroup, archived = false) =>
+          (
+            await one(
+              `insert into project (term_id, name, slug, ad_group_name, archived_at)
+               select o.term_id, $2, $3, $4, case when $5 then now() end
+                 from offering o where o.id = $1 returning id`,
+              [ids.optional, name, slug, adGroup, archived],
+            )
+          ).id;
+        const joins = async (projectId, userId) => {
+          await root.query(
+            `insert into project_offering (project_id, term_id, offering_id)
+             select $1, o.term_id, o.id from offering o where o.id = $2
+             on conflict do nothing`,
+            [projectId, ids.optional],
+          );
+          await root.query(
+            `insert into project_member (project_id, offering_id, user_id, course_id, track)
+             values ($1, $2, $3, $4, 'backend')`,
+            [projectId, ids.optional, userId, ids.nr5a],
+          );
+        };
+        const alpha = await project("Alfa", "alfa", "proj-a");
+        const beta = await project("Beta", "beta", "proj-b");
+        const gone = await project("Viejo", "viejo", "proj-c", true);
+        await joins(alpha, ids.student);
+        // Beta's member is somebody of its own: earlier subtests move the seeded
+        // teacher out of NR5A, and tic-registry's `enrolled_via` key wants the
+        // course row.
+        const partner = (
+          await one(
+            `insert into "user" (email, name, surname) values ('fede@ort.edu.ar', 'Fede', 'Alumne') returning id`,
+          )
+        ).id;
+        await root.query(
+          `insert into student_course (student_id, course_id) values ($1, $2)`,
+          [partner, ids.nr5a],
+        );
+        await joins(beta, partner);
+        await joins(gone, ids.student);
+        // The class meets on Fridays, block 3. 2027-11-12 is a Friday.
+        await root.query(
+          `insert into offering_time_slot (offering_id, day, slot) values ($1, 'friday', 3)`,
+          [ids.optional],
+        );
+
+        assert.deepEqual(
+          (await offeringTeams(db, ids.optional)).map((team) => team.name),
+          ["Alfa", "Beta"],
+          "an archived project is not a team",
+        );
+        assert.deepEqual(
+          (await myTeams(db, ids.optional, ids.student)).sort(),
+          [alpha, gone].sort(),
+        );
+
+        const fri = randomUUID();
+        const body = (
+          base,
+          presentations,
+          blocks = [
+            {
+              id: fri,
+              round: 1,
+              date: "2027-11-12",
+              block: 3,
+              slotCount: 3,
+              slotStarts: null,
+            },
+          ],
+        ) => ({ base, blocks, presentations });
+
+        const first = await saveSchedule(
+          db,
+          home.homeId,
+          ids.optional,
+          2027,
+          body(null, [
+            { projectId: alpha, round: 1, pin: { blockId: fri, slot: 1 } },
+            { projectId: beta, round: 1, pin: { blockId: fri, slot: 2 } },
+          ]),
+        );
+        let rows = await readSchedule(db, home.homeId);
+        assert.equal(rows.blocks.length, 1);
+        assert.deepEqual(
+          rows.queue.map((entry) => [
+            entry.projectId,
+            entry.position,
+            entry.state,
+          ]),
+          [
+            [alpha, 0, "pending"],
+            [beta, 1, "pending"],
+          ],
+        );
+        assert.equal(
+          rows.savedAt.getTime(),
+          first.getTime(),
+          "the token round-trips exactly",
+        );
+
+        await assert.rejects(
+          saveSchedule(db, home.homeId, ids.optional, 2027, body(null, [])),
+          { code: "stale_schedule" },
+        );
+        await assert.rejects(
+          saveSchedule(
+            db,
+            home.homeId,
+            ids.optional,
+            2027,
+            body(
+              first,
+              [],
+              [
+                {
+                  id: randomUUID(),
+                  round: 1,
+                  date: "2027-11-11",
+                  block: 3,
+                  slotCount: 3,
+                  slotStarts: null,
+                },
+              ],
+            ),
+          ),
+          { code: "not_a_class_block" },
+          "Thursday is not a day this class meets",
+        );
+        await assert.rejects(
+          saveSchedule(
+            db,
+            home.homeId,
+            ids.optional,
+            2027,
+            body(first, [{ projectId: gone, round: 1, pin: null }]),
+          ),
+          { code: "unknown_team" },
+        );
+
+        // A state flipped on the day survives a save from an older tab, and
+        // does not stale it. Swapping the two pins in that save is the case
+        // the clear-first step exists for.
+        const alphaRow = rows.queue.find(
+          (entry) => entry.projectId === alpha,
+        ).id;
+        await setState(db, home.homeId, alphaRow, "presenting");
+        const second = await saveSchedule(
+          db,
+          home.homeId,
+          ids.optional,
+          2027,
+          body(first, [
+            { projectId: beta, round: 1, pin: { blockId: fri, slot: 1 } },
+            { projectId: alpha, round: 1, pin: { blockId: fri, slot: 2 } },
+          ]),
+        );
+        rows = await readSchedule(db, home.homeId);
+        assert.deepEqual(
+          rows.queue.map((entry) => [
+            entry.projectId,
+            entry.pinnedSlot,
+            entry.state,
+          ]),
+          [
+            [beta, 1, "pending"],
+            [alpha, 2, "presenting"],
+          ],
+        );
+        await assert.rejects(
+          setState(db, home.homeId, randomUUID(), "passed"),
+          { code: "not_found" },
+        );
+
+        // The database refuses two pins on one slot even from a writer that
+        // skipped the api's check.
+        await assert.rejects(
+          svc.query(
+            `update campus.presentation set pinned_slot = 1 where id = $1`,
+            [alphaRow],
+          ),
+          { code: "23505" },
+        );
+
+        // Leaving everything out deletes it, through the runtime role's grants.
+        await saveSchedule(
+          db,
+          home.homeId,
+          ids.optional,
+          2027,
+          body(second, [], []),
+        );
+        rows = await readSchedule(db, home.homeId);
+        assert.deepEqual([rows.blocks.length, rows.queue.length], [0, 0]);
+
+        assert.equal(await deactivate(db, ids.optional), true);
       },
     );
 

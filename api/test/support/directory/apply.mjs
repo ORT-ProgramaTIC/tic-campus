@@ -76,6 +76,12 @@ export async function applyCampusRoles(pool) {
     GRANT SELECT ON directory.offering_course TO campus_app;
     GRANT SELECT ON directory.teacher_offering TO campus_app;
     GRANT SELECT ON directory.enrollment TO campus_app;
+    -- F45's three. Upstream these need no line of their own — tic-registry's
+    -- default privileges grant campus_app every view it publishes — but here
+    -- each one is written out, so a read nobody declared still fails.
+    GRANT SELECT ON directory.project TO campus_app;
+    GRANT SELECT ON directory.project_member TO campus_app;
+    GRANT SELECT ON directory.offering_time_slot TO campus_app;
   `);
 }
 

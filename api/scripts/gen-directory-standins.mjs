@@ -7,12 +7,12 @@
  *   node scripts/gen-directory-standins.mjs --check    # fail if they are stale
  *
  * **The test suite never runs this.** It reads the committed `.sql`, so a laptop with no
- * Python and no tic-auth checkout runs every integration test unchanged. Only regenerating
- * needs Python; only the check needs tic-auth on disk, and it skips rather than fails when
+ * Python and no tic-registry checkout runs every integration test unchanged. Only regenerating
+ * needs Python; only the check needs tic-registry on disk, and it skips rather than fails when
  * it is absent — a contributor without the sibling repo should not be blocked by a drift
  * check they cannot run.
  *
- * Why generated at all: hand-written stand-ins would be a second definition of tic-auth's
+ * Why generated at all: hand-written stand-ins would be a second definition of tic-registry's
  * schema, free to drift without anything noticing — and drifting is precisely what the
  * directory contract must not do unnoticed, since campus reads it for every permission it
  * grants (F5). Ported from `MEV/api/scripts/gen-directory-standins.mjs`.
@@ -28,16 +28,21 @@ const REPO_ROOT = resolve(API_ROOT, "..");
 
 /**
  * Two candidates, because this repo is not where its siblings are: the VM workspace holds
- * `tic-auth/` and `MEV/` at the top and this repo at `tic-campus/new/`, so tic-auth is a
+ * `tic-registry/` and `MEV/` at the top and this repo at `tic-campus/new/`, so tic-registry is a
  * sibling of the *parent*. Both are tried so a flatter checkout works unchanged, and
- * `TIC_AUTH_REPO` overrides either.
+ * `TIC_REGISTRY_REPO` overrides either.
+ *
+ * tic-registry and not tic-auth: the 2026-09-22 split left tic-auth the IdP and moved the
+ * directory — its models, `DIRECTORY_VIEWS` and the migrations that grant campus — to the
+ * repo now called tic-registry, so a tic-auth checkout no longer has anything to generate
+ * from.
  */
 const CANDIDATES = [
-  process.env.TIC_AUTH_REPO,
-  resolve(REPO_ROOT, "..", "tic-auth"),
-  resolve(REPO_ROOT, "..", "..", "tic-auth"),
+  process.env.TIC_REGISTRY_REPO,
+  resolve(REPO_ROOT, "..", "tic-registry"),
+  resolve(REPO_ROOT, "..", "..", "tic-registry"),
 ].filter(Boolean);
-const TIC_AUTH = resolve(
+const TIC_REGISTRY = resolve(
   CANDIDATES.find((path) => existsSync(path)) ?? CANDIDATES[0],
 );
 
@@ -58,22 +63,22 @@ function skip(message) {
   process.exit(0);
 }
 
-if (!existsSync(TIC_AUTH)) {
-  const how = `set TIC_AUTH_REPO, or check out tic-auth in the VM workspace (looked in ${CANDIDATES.join(", ")})`;
+if (!existsSync(TIC_REGISTRY)) {
+  const how = `set TIC_REGISTRY_REPO, or check out tic-registry in the VM workspace (looked in ${CANDIDATES.join(", ")})`;
   if (check)
-    skip(`tic-auth is not on disk, so drift cannot be checked. ${how}.`);
-  fail(`tic-auth is not on disk. ${how}.`);
+    skip(`tic-registry is not on disk, so drift cannot be checked. ${how}.`);
+  fail(`tic-registry is not on disk. ${how}.`);
 }
 
-// tic-auth's own venv first: it already has the pinned SQLAlchemy this generator compiles
+// tic-registry's own venv first: it already has the pinned SQLAlchemy this generator compiles
 // DDL with, and a system python almost certainly does not.
-const venvPython = resolve(TIC_AUTH, ".venv/bin/python");
+const venvPython = resolve(TIC_REGISTRY, ".venv/bin/python");
 const [command, leadingArgs] = existsSync(venvPython)
   ? [venvPython, []]
   : ["uv", ["run", "python"]];
 
-const run = spawnSync(command, [...leadingArgs, GENERATOR, TIC_AUTH], {
-  cwd: TIC_AUTH,
+const run = spawnSync(command, [...leadingArgs, GENERATOR, TIC_REGISTRY], {
+  cwd: TIC_REGISTRY,
   encoding: "utf8",
   maxBuffer: 32 * 1024 * 1024,
 });
@@ -104,7 +109,7 @@ if (check) {
   const committedMeta = JSON.parse(readFileSync(META_PATH, "utf8"));
 
   // `generatedAt` and `upstreamRevision` move on their own, so neither is compared: an
-  // unrelated tic-auth commit must not fail this. The SQL and the source hashes are what
+  // unrelated tic-registry commit must not fail this. The SQL and the source hashes are what
   // actually carry the contract.
   const sqlMatches = committedSql === generated.sql;
   const hashesMatch =
@@ -113,17 +118,17 @@ if (check) {
 
   if (sqlMatches && hashesMatch) {
     console.log(
-      "gen-directory-standins: the committed stand-ins match tic-auth.",
+      "gen-directory-standins: the committed stand-ins match tic-registry.",
     );
     process.exit(0);
   }
 
   const what = !sqlMatches
     ? "the generated SQL differs from the committed file"
-    : "the SQL is unchanged but tic-auth's source files have moved";
+    : "the SQL is unchanged but tic-registry's source files have moved";
   fail(
     `${what}.\n` +
-      `  tic-auth's directory contract has changed and campus's stand-ins are stale.\n` +
+      `  tic-registry's directory contract has changed and campus's stand-ins are stale.\n` +
       `  Run \`pnpm db:stubs:generate\`, read the diff, and check whether anything campus\n` +
       `  reads (api/src/db/schema/directory.ts) has to change with it.`,
   );
@@ -134,5 +139,5 @@ writeFileSync(SQL_PATH, generated.sql);
 writeFileSync(META_PATH, `${JSON.stringify(generated.provenance, null, 2)}\n`);
 console.log(
   `gen-directory-standins: wrote ${generated.provenance.baseTables.length} tables and ` +
-    `${generated.provenance.views.length} views from ${TIC_AUTH}`,
+    `${generated.provenance.views.length} views from ${TIC_REGISTRY}`,
 );

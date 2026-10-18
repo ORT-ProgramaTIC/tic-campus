@@ -116,6 +116,10 @@ export const offeringHome = campus.table(
      *  for a late fix. Null is "the date decides"; relocking clears it. A
      *  timestamp rather than a boolean, for the reason `archivedAt` is one. */
     unlockedAt: timestamp("unlocked_at", { withTimezone: true }),
+    /** When F45's presentation schedule was last saved — the token its `PUT`
+     *  carries back, F12's `baseVersionId` for a body with no version of its
+     *  own. Null is "never saved". A state change does not move it. */
+    scheduleSavedAt: timestamp("schedule_saved_at", { withTimezone: true }),
   },
   // Total, never partial: `ON CONFLICT (offering_id)` needs this as its target,
   // and a `WHERE archived_at IS NULL` index is not one.

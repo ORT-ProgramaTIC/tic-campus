@@ -23,7 +23,7 @@ re-argued per item):
 | Roster            | **Read live from the `directory.*` views.** Campus owns no users, courses, subjects, offerings, enrollments, time slots or teacher assignments                                                    |
 | Datastore         | The `campus` schema in the shared `tic-db`. **No Google Sheets anywhere**                                                                                                                         |
 | Hosting           | Co-tenant stack at `/opt/tic-campus` (M14), `tic-campus-edge` + `tic-db` (api only)                                                                                                               |
-| Launch            | **School year 2027.** The old campus finishes 2026 untouched. No data migration, no marks import, no article conversion                                                                           |
+| Launch            | **School year 2027**, except F45, which ships alone for the 2026 Proyecto presentations. The old campus finishes 2026 untouched. No data migration, no marks import, no article conversion        |
 | Document language | This document is in English. **All user-facing copy is in Spanish (rioplatense)**                                                                                                                 |
 | Sequencing        | Items are grouped by area, not by delivery phase. Sequencing lives in each item's **Status**                                                                                                      |
 
@@ -1459,6 +1459,10 @@ student_id, recorded_at DESC)`; `saveOfficialGrades` inserts, and it has to,
   exist — `02-29` included, or a leap-year setting would lock on 1 March three
   years in four.
 
+  **The bell schedule (F45)** is the third: `BELL` in `api/src/offerings/presentations.ts`,
+  blocks 1–6 with their start and end. It changes when the school changes its timetable, which
+  is a deploy anyway, and there is deliberately no environment override for it.
+
 ---
 
 ## Group K — The interface
@@ -1493,3 +1497,63 @@ student_id, recorded_at DESC)`; `saveOfficialGrades` inserts, and it has to,
   generated UI would be a thing to throw away twice, once when the brand is decided and
   again when it turns out not to be what anyone wanted. It is also the part of the rebuild
   worth doing by hand for its own sake.
+
+---
+
+## Group L — Presentations
+
+### F45 · Presentation schedule
+
+- [ ] **Status:** building
+- **Prior art:** `campus-proyecto` (2025, separate Astro repo, abandoned after 2025-11-25):
+  `orden-presentacion` read two Google Sheets — `Presentacion` (an ordered list of groups,
+  each with `Instancia`, `Rotación` and `Estado`) and `Fechas` (date, block, round, rotation
+  and `N Grupos`, how many fit) — and recomputed every team's estimated date and block in the
+  browser on each load. Identity was a Fuse.js name match against an `Estudiante` sheet.
+- **Decision:** An offering can publish the order in which its teams present, and each team
+  sees when it is expected to. **It ships alone, for the 2026 Proyecto presentations**, ahead
+  of the 2027 launch — the one exception to the Launch row above.
+  - **Teams are tic-registry projects.** There is no team entity: a project _is_ its team
+    (tic-registry `docs/SCHEMA.md`). Campus reads `directory.project` and
+    `directory.project_member` and stores no membership, the way it stores no roster (F5).
+    An offering's teams are the projects with a member whose `offering_id` is that offering,
+    because `project_offering` is not published — so a project nobody has joined is not
+    schedulable, and that is a tic-registry row to add.
+  - **Rotation is the offering.** 2025's `Rotación` column (AB/CD) existed because one sheet
+    served two groups of courses. In the directory each rotation is already its own offering
+    (2026: 51 is NR4A + NR4C, 52 is NR4B + NR4D), so each home has its own schedule and
+    there is nothing to filter.
+  - **Generic, not a Proyecto page** (F17). Any offering may use it; a home shows it only
+    when its teacher adds the `presentations` section, which is not in the default list.
+  - **Only the offering's own blocks.** A presentation block is a date plus a block number,
+    and both must match one of the offering's weekly modules in
+    `directory.offering_time_slot` — a block the class does not meet in is a `400`.
+  - **A block holds its own slots.** Three by default, split evenly across the block from
+    F42's `BELL`; the teacher may change the count and override any slot's start. A slot ends
+    where the next one starts, and the last one where the block does. Stored as a count and
+    an array of overrides with `null` for "even", so changing the count re-splits instead of
+    leaving stale times behind.
+  - **A team may be pinned** to a block and slot. Two teams cannot share one, and Postgres
+    says so (a partial unique index), not a check two tabs would both pass.
+  - **The estimate is derived on every read and never stored**, exactly as marks are (F20).
+    Per round: pinned teams that have not presented hold their slot while it is live; every
+    other pending or presenting team, in queue order, takes the next live free slot. A slot
+    is live until it ends, so a team presenting right now keeps the slot it is in. **A pin
+    whose slot passed with the team still pending falls back into the queue** at its
+    position, flagged `pinMissed` — nothing waits on the teacher to notice. Finished teams
+    have no estimate, as in 2025.
+  - **States** are `pending`, `presenting`, `presented`, `passed`, `failed` and `absent` —
+    2025's Pendiente, Presentando, Presentado, Aprobado, Desaprobado and No Presentan. Text
+    checked in the api, no enum (F18).
+  - **Signed-in only.** Staff of the offering and its enrolled students read it; anyone else
+    gets a `403`. Unlike F4's articles this is not public: it is a list of who presents when.
+  - **One write for the schedule, one for state.** The teacher saves blocks, slots, order and
+    pins in one `PUT`, which **deletes by omission** — the opposite of F15's rule, and safe
+    here because nothing points at these rows except the pins the same body rewrites. Two
+    teachers are F12's problem and get F12's answer: the `PUT` carries the `savedAt` it
+    loaded, and a stale one is `409 stale_schedule`. State is a separate `PATCH` that does
+    not move `savedAt`, so flipping a team to "presentando" during a presentation never
+    stales an open dashboard — which is also why the `PUT` never writes state.
+  - **No year lock.** F35 locks marks; this is not one.
+  - **Deferred:** a bell item when a team's estimate moves (F30), a cross-offering view, and
+    member lists.

@@ -20,6 +20,7 @@ import { createHomeContentRoutes } from "./routes/home-content.js";
 import { createLibraryRoutes } from "./routes/library.js";
 import { createNotificationRoutes } from "./routes/notifications.js";
 import { createOfferingRoutes } from "./routes/offerings.js";
+import { createPresentationRoutes } from "./routes/presentations.js";
 import { createUploadRoutes } from "./routes/uploads.js";
 
 const config = loadConfig();
@@ -201,8 +202,8 @@ app.use("/api/admin/offerings", createAdminOfferingRoutes(db, guard));
 // The subject's library (F8), and what one offering does with it (F4, F8, F13).
 // `/api/homes` rather than `/api/offerings/:id/…`: see the note in its file.
 app.use("/api/subjects", createLibraryRoutes(db, guard, config.uploadsDir));
-// Two routers, one prefix, and **one `guard` — on the mount and not inside
-// either of them**. A guard per router is a session read and renewal per router
+// Three routers, one prefix, and **one `guard` — on the mount and not inside
+// any of them**. A guard per router is a session read and renewal per router
 // a request walks past on its way to the one that matches, which for everything
 // the gradebook serves would be two.
 app.use(
@@ -210,6 +211,7 @@ app.use(
   guard,
   createHomeContentRoutes(db),
   createGradebookRoutes(db, config.yearLock),
+  createPresentationRoutes(db),
 );
 // The bell (F30). Always the caller's own, so the session is the whole gate.
 app.use("/api/notifications", guard, createNotificationRoutes(db));

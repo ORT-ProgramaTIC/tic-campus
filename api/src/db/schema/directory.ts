@@ -1,4 +1,11 @@
-import { boolean, integer, pgSchema, pgTable, text } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  integer,
+  pgSchema,
+  pgTable,
+  text,
+  timestamp,
+} from "drizzle-orm/pg-core";
 
 /**
  * tic-auth's half of the database, declared so campus can reference it and read
@@ -221,5 +228,78 @@ export const directoryEnrollment = directory
     courseId: integer("course_id").notNull(),
     offeringId: integer("offering_id").notNull(),
     via: text("via").notNull(),
+  })
+  .existing();
+
+/**
+ * An offering's weekly modules: which day, which block, which room — tic-registry's
+ * `0010`. Read for one thing, F45's rule that a presentation block is one the
+ * class actually meets in.
+ *
+ * **`slot` is the block number** (1–6), and campus calls it a block: in F45 a
+ * *slot* is a presentation turn inside a block, and two meanings of one word in
+ * one feature is how a payload gets built wrong. `day` is a Postgres enum,
+ * `monday`…`friday`, read as text.
+ *
+ * The per-module teacher override (`time_slot_teacher`) is not declared:
+ * nothing here asks who teaches a module.
+ */
+export const directoryOfferingTimeSlot = directory
+  .view("offering_time_slot", {
+    id: integer("id").notNull(),
+    offeringId: integer("offering_id").notNull(),
+    day: text("day").notNull(),
+    slot: integer("slot").notNull(),
+    classroom: text("classroom"),
+  })
+  .existing();
+
+/**
+ * A student project — and **the team, since there is no separate team entity**
+ * (tic-registry `docs/SCHEMA.md`, "A project is its team"). Read for F45's
+ * presentation schedule, which orders teams.
+ *
+ * Scoped to a term and not to an offering: the same students carry one project
+ * across Proyecto and a seminar. Which offerings it runs in is
+ * `project_offering`, which is **not published** — so campus finds an
+ * offering's projects through `project_member.offering_id` below, and a project
+ * nobody has joined yet is not in any offering campus can see.
+ *
+ * `name` is a free-text label and not unique; `slug` is the handle tic-host
+ * builds container names from. Campus displays the first and keys on neither —
+ * it keys on `id`, which is the only one that never changes.
+ */
+export const directoryProject = directory
+  .view("project", {
+    id: integer("id").notNull(),
+    termId: integer("term_id").notNull(),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    adGroupName: text("ad_group_name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    academicYearId: integer("academic_year_id").notNull(),
+    year: integer("year").notNull(),
+    isCurrent: boolean("is_current").notNull(),
+  })
+  .existing();
+
+/**
+ * Who is on a project, and **which of its offerings justifies them being
+ * there** — `offering_id` is a leg of tic-registry's composite key, not a
+ * convenience, and it is why "this offering's teams" is answerable at all.
+ *
+ * `track` is a discipline (Backend, UX/UI…), deliberately not called `role`.
+ * Read as text, like `offering.kind`, because campus branches on none of it.
+ */
+export const directoryProjectMember = directory
+  .view("project_member", {
+    id: integer("id").notNull(),
+    projectId: integer("project_id").notNull(),
+    offeringId: integer("offering_id").notNull(),
+    userId: integer("user_id").notNull(),
+    courseId: integer("course_id").notNull(),
+    track: text("track").notNull(),
+    joinedAt: timestamp("joined_at", { withTimezone: true }).notNull(),
   })
   .existing();
