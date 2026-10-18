@@ -3080,6 +3080,22 @@ test(
           "a struck number past the count",
         );
 
+        // A block removed and added back on the same date and module comes
+        // with a fresh client id; the old row goes before the new one lands.
+        const again = randomUUID();
+        const fourth = await saveSchedule(
+          db,
+          home.homeId,
+          ids.optional,
+          2027,
+          body(third, [], struck({ id: again, skippedSlots: [] })),
+        );
+        rows = await readSchedule(db, home.homeId);
+        assert.deepEqual(
+          rows.blocks.map((block) => block.id),
+          [again],
+        );
+
         // Leaving everything out deletes it, through the runtime role's grants
         // — the start included, since an absent `queueStarts` is "from now".
         await saveSchedule(
@@ -3087,7 +3103,7 @@ test(
           home.homeId,
           ids.optional,
           2027,
-          body(third, [], []),
+          body(fourth, [], []),
         );
         rows = await readSchedule(db, home.homeId);
         assert.deepEqual([rows.blocks.length, rows.queue.length], [0, 0]);

@@ -501,9 +501,23 @@ export async function saveSchedule(
       .set({ pinnedBlockId: null, pinnedSlot: null })
       .where(eq(presentation.offeringHomeId, homeId));
 
+    // Before the upsert, with nothing pinned to them any more: a block removed
+    // and added back on the same date and module arrives with a fresh id, and
+    // would trip `(home, date, block)` against the row it replaces.
+    const blockIds = input.blocks.map((block) => block.id);
+    await tx
+      .delete(presentationBlock)
+      .where(
+        and(
+          eq(presentationBlock.offeringHomeId, homeId),
+          blockIds.length > 0
+            ? notInArray(presentationBlock.id, blockIds)
+            : undefined,
+        ),
+      );
+
     // A block id belongs to the home that created it. Without this, an id from
     // another offering's body would upsert straight over that offering's row.
-    const blockIds = input.blocks.map((block) => block.id);
     if (blockIds.length > 0) {
       const foreign = await tx
         .select({ id: presentationBlock.id })
@@ -579,16 +593,6 @@ export async function saveSchedule(
         and(
           eq(presentation.offeringHomeId, homeId),
           kept.length > 0 ? notInArray(presentation.id, kept) : undefined,
-        ),
-      );
-    await tx
-      .delete(presentationBlock)
-      .where(
-        and(
-          eq(presentationBlock.offeringHomeId, homeId),
-          blockIds.length > 0
-            ? notInArray(presentationBlock.id, blockIds)
-            : undefined,
         ),
       );
 
