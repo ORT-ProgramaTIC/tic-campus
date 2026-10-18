@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { embedSrc } from "../dist/embeds.js";
+import { embedSrc } from "../src/embeds.ts";
 
 test("allowlisted players map to a rebuilt src", () => {
   const yt = "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ";

@@ -10,7 +10,12 @@ pnpm test           # the api's own checks
 pnpm format         # prettier
 
 pnpm --filter tic-campus-api db:generate   # after editing api/src/db/schema/
+pnpm --filter tic-campus-web dev           # Vite on :5173, /api proxied to :3000
 ```
+
+`web/` is React 19 + Vite + Tailwind 4 + TanStack Query + React Router. The plumbing is in
+`web/src/api/` (client, types, query hooks) and `web/src/router.tsx`; the screens are
+`web/src/screens.tsx`'s slots, and they are drawn by hand (F44).
 
 `docs/FEATURES.md` is what this is being built to.
 
