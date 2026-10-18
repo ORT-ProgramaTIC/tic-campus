@@ -3,6 +3,7 @@ import {
   ChevronDown,
   ChevronUp,
   GripVertical,
+  Info,
   X,
   Minus,
   Pin,
@@ -52,12 +53,14 @@ import {
 import {
   blockLabel,
   formatDay,
+  fullName,
   roundLabel,
   STATE_LABEL,
   STATE_TONE,
+  surnames,
 } from "./labels.ts";
 import { useOffering } from "./router.tsx";
-import { Modal, Section } from "./ui.tsx";
+import { MemberList, Modal, Section } from "./ui.tsx";
 import { WeekGrid } from "./weekgrid.tsx";
 import { addDays, mondayOf, openingWeek } from "./weeks.ts";
 
@@ -179,11 +182,9 @@ function Editor({
       seated.set(`${row.estimate.blockId}/${row.estimate.slot}`, row.projectId);
     }
   }
-  const names = new Map(
-    payload.teams.map((team) => [team.projectId, team.name]),
-  );
-  const nameOf = (projectId: number) =>
-    names.get(projectId) ?? "Grupo eliminado";
+  const teams = new Map(payload.teams.map((team) => [team.projectId, team]));
+  const teamOf = (projectId: number) => teams.get(projectId);
+  const [info, setInfo] = useState<{ projectId: number; round: number }>();
 
   /* ── Saving, and not leaving with it unsaved ── */
 
@@ -351,7 +352,7 @@ function Editor({
                     current={block.round === round}
                     start={queueStart(block.round)}
                     seated={seated}
-                    nameOf={nameOf}
+                    teamOf={teamOf}
                     pinned={draft.queue}
                     problem={problems.get(block.id)}
                     onBlock={() => setEditing({ blockId: block.id })}
@@ -391,9 +392,20 @@ function Editor({
           placed={placed}
           saved={payload.presentations}
           teams={payload.teams}
-          nameOf={nameOf}
+          teamOf={teamOf}
+          onInfo={(projectId) => setInfo({ projectId, round })}
         />
       </div>
+
+      {info && (
+        <Modal
+          eyebrow={roundLabel(info.round)}
+          title={teamOf(info.projectId)?.name ?? "Grupo eliminado"}
+          onClose={() => setInfo(undefined)}
+        >
+          <MemberList members={teamOf(info.projectId)?.members ?? []} />
+        </Modal>
+      )}
 
       {editing &&
         (() => {
@@ -423,11 +435,11 @@ function Editor({
               slot={slot}
               bell={bell[block.block]!}
               draft={draft}
-              seatedName={(() => {
+              seated={(() => {
                 const id = seated.get(`${block.id}/${slot.slot}`);
-                return id === undefined ? undefined : nameOf(id);
+                return id === undefined ? undefined : teams.get(id);
               })()}
-              nameOf={nameOf}
+              teamOf={teamOf}
               problem={problems.get(block.id)}
               edit={edit}
               onClose={close}
@@ -447,6 +459,12 @@ const WEEKDAY = new Intl.DateTimeFormat("es-AR", {
 const shortDay = (date: string) =>
   `${WEEKDAY.format(new Date(`${date}T00:00:00Z`))} ${Number(date.slice(8))}/${Number(date.slice(5, 7))}`;
 
+/** A team in a `<select>`: the project, then its members. */
+const optionLabel = (team: Team | undefined) =>
+  team && team.members.length > 0
+    ? `${team.name} — ${surnames(team)}`
+    : surnames(team);
+
 function Banner({ children }: { children: ReactNode }) {
   return (
     <p className="flex items-start gap-2 rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-200 ring-inset">
@@ -465,7 +483,7 @@ function EditBlock({
   current,
   start,
   seated,
-  nameOf,
+  teamOf,
   pinned,
   problem,
   onBlock,
@@ -477,7 +495,7 @@ function EditBlock({
   current: boolean;
   start: { blockId: string; slot: number } | undefined;
   seated: Map<string, number>;
-  nameOf: (projectId: number) => string;
+  teamOf: (projectId: number) => Team | undefined;
   pinned: Draft["queue"];
   problem: string | undefined;
   onBlock: () => void;
@@ -531,8 +549,11 @@ function EditBlock({
                     sin turno
                   </span>
                 ) : who !== undefined ? (
-                  <span className="min-w-0 truncate" title={nameOf(who)}>
-                    {nameOf(who)}
+                  <span
+                    className="min-w-0 truncate"
+                    title={surnames(teamOf(who))}
+                  >
+                    {teamOf(who)?.name ?? "Grupo eliminado"}
                   </span>
                 ) : (
                   <span className="whitespace-nowrap text-ink-faint">
@@ -650,8 +671,8 @@ function SlotDialog({
   slot,
   bell,
   draft,
-  seatedName,
-  nameOf,
+  seated,
+  teamOf,
   problem,
   edit,
   onClose,
@@ -660,8 +681,8 @@ function SlotDialog({
   slot: Slot;
   bell: { start: string; end: string };
   draft: Draft;
-  seatedName: string | undefined;
-  nameOf: (projectId: number) => string;
+  seated: Team | undefined;
+  teamOf: (projectId: number) => Team | undefined;
   problem: string | undefined;
   edit: (change: (draft: Draft) => Draft) => void;
   onClose: () => void;
@@ -691,10 +712,13 @@ function SlotDialog({
         <p className="text-sm text-ink-muted">
           {slot.skipped
             ? "Quitado: no presenta nadie."
-            : seatedName
-              ? `${holder ? "Fijado" : "Según la cola"}: ${seatedName}`
+            : seated
+              ? `${holder ? "Fijado" : "Según la cola"}: ${seated.name}`
               : "Libre"}
         </p>
+        {seated && !slot.skipped && seated.members.length > 0 && (
+          <p className="text-xs text-ink-faint">{surnames(seated)}</p>
+        )}
       </div>
 
       <label className="mt-6 block">
@@ -717,7 +741,7 @@ function SlotDialog({
           <option value="">Ninguno: lo llena la cola</option>
           {entries.map((entry) => (
             <option key={entry.projectId} value={entry.projectId}>
-              {nameOf(entry.projectId)}
+              {optionLabel(teamOf(entry.projectId))}
               {entry.pin && entry !== holder ? " (fijo en otro turno)" : ""}
             </option>
           ))}
@@ -833,7 +857,8 @@ function Queue({
   placed,
   saved,
   teams,
-  nameOf,
+  teamOf,
+  onInfo,
 }: {
   round: number;
   draft: Draft;
@@ -841,7 +866,8 @@ function Queue({
   placed: Map<string, Placement>;
   saved: Presentation[];
   teams: Team[];
-  nameOf: (projectId: number) => string;
+  teamOf: (projectId: number) => Team | undefined;
+  onInfo: (projectId: number) => void;
 }) {
   const offering = useOffering();
   const setState = useSetState(offering.offeringId);
@@ -875,7 +901,8 @@ function Queue({
           const at = placed.get(`${round}/${entry.projectId}`);
           const row = rowOf.get(entry.projectId);
           const state = row?.state ?? "pending";
-          const name = nameOf(entry.projectId);
+          const team = teamOf(entry.projectId);
+          const name = surnames(team);
           return (
             <li
               key={entry.projectId}
@@ -920,8 +947,12 @@ function Queue({
               {/* Name over state on a phone, side by side from `sm`. */}
               <div className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
                 <div className="min-w-0 flex-1">
-                  <p className="flex items-center gap-1 font-medium">
-                    <span className="truncate" title={name}>
+                  {/* Members first: they are who the teacher knows. */}
+                  <p className="flex items-center gap-1 font-semibold">
+                    <span
+                      className="line-clamp-2"
+                      title={team?.members.map(fullName).join(", ")}
+                    >
                       {name}
                     </span>
                     {entry.pin && (
@@ -932,8 +963,11 @@ function Queue({
                     )}
                   </p>
                   <p
-                    className={`text-xs ${at?.pinMissed ? "text-amber-700" : "text-ink-muted"}`}
+                    className={`truncate text-[13px] ${at?.pinMissed ? "text-amber-700" : "text-ink-muted"}`}
                   >
+                    {team && team.members.length > 0 && (
+                      <span className="text-ink">{team.name} · </span>
+                    )}
                     {at?.pinMissed && "Su turno fijo pasó · "}
                     {at?.estimate
                       ? `${shortDay(at.estimate.date)} · ${at.estimate.start}`
@@ -964,6 +998,15 @@ function Queue({
                   )}
                 </select>
               </div>
+              <button
+                type="button"
+                aria-label={`Integrantes de ${name}`}
+                title="Integrantes"
+                onClick={() => onInfo(entry.projectId)}
+                className="grid size-7 shrink-0 place-items-center rounded-lg text-ink-muted hover:bg-lilac-50 hover:text-ink"
+              >
+                <Info className="size-4" aria-hidden />
+              </button>
               <div className="flex flex-col">
                 <button
                   type="button"
@@ -1022,7 +1065,7 @@ function Queue({
             </option>
             {missing.map((team) => (
               <option key={team.projectId} value={team.projectId}>
-                {team.name}
+                {optionLabel(team)}
               </option>
             ))}
           </select>

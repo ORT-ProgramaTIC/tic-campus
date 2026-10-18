@@ -1,4 +1,4 @@
-import type { PresentationState } from "./api/types.ts";
+import type { Member, PresentationState, Team } from "./api/types.ts";
 
 /** What each state is called on screen — the 2025 sheet's words. */
 export const STATE_LABEL: Record<PresentationState, string> = {
@@ -63,3 +63,30 @@ const TRACK_LABEL: Record<string, string> = {
 };
 
 export const trackLabel = (track: string) => TRACK_LABEL[track] ?? track;
+
+export const fullName = (member: Member) =>
+  [member.name, member.surname].filter(Boolean).join(" ") || "—";
+
+/**
+ * `García · López · Pérez`: how a teacher finds a group, before its project
+ * name. Two members sharing a surname get their initial (`García M.`). A team
+ * with no members loaded reads as its project name; a team no longer in the
+ * offering as "Grupo eliminado".
+ */
+export function surnames(team: Team | undefined): string {
+  if (!team) return "Grupo eliminado";
+  if (team.members.length === 0) return team.name;
+  const count = new Map<string, number>();
+  for (const one of team.members) {
+    const key = one.surname ?? "";
+    count.set(key, (count.get(key) ?? 0) + 1);
+  }
+  return team.members
+    .map((one) => {
+      if (!one.surname) return one.name ?? "—";
+      return count.get(one.surname)! > 1 && one.name
+        ? `${one.surname} ${one.name.charAt(0)}.`
+        : one.surname;
+    })
+    .join(" · ");
+}

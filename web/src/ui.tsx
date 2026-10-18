@@ -1,9 +1,39 @@
 import { X } from "lucide-react";
 import type { ReactNode } from "react";
-import type { PresentationState } from "./api/types.ts";
-import { STATE_LABEL, STATE_TONE } from "./labels.ts";
+import type { Member, PresentationState } from "./api/types.ts";
+import { fullName, STATE_LABEL, STATE_TONE, trackLabel } from "./labels.ts";
 
 /** Pieces more than one screen draws. */
+
+/** A team's members, with their track: the dialogs' "Integrantes". */
+export function MemberList({ members }: { members: Member[] }) {
+  return (
+    <>
+      <h3 className="mt-6 text-sm font-semibold">Integrantes</h3>
+      {members.length === 0 ? (
+        <p className="mt-2 text-sm text-ink-muted">Sin integrantes cargados.</p>
+      ) : (
+        <ul className="mt-2 flex flex-col gap-2">
+          {members.map((member, index) => (
+            <li key={index} className="flex items-center gap-3">
+              <span className="grid size-9 shrink-0 place-items-center rounded-full bg-lilac-100 text-xs font-semibold text-lilac-700">
+                {[member.name, member.surname]
+                  .map((part) => part?.charAt(0).toUpperCase() ?? "")
+                  .join("")}
+              </span>
+              <div className="min-w-0">
+                <p className="truncate">{fullName(member)}</p>
+                <p className="text-xs text-ink-muted">
+                  {trackLabel(member.track)}
+                </p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  );
+}
 
 export function StateChip({ state }: { state: PresentationState }) {
   return (
