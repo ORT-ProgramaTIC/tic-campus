@@ -570,7 +570,7 @@ function EditBlock({
                   {startAt === slot.slot && (
                     <Play
                       className="size-3.5 fill-current text-lilac-700"
-                      aria-label="La cola empieza acá"
+                      aria-label="El orden empieza acá"
                     />
                   )}
                 </span>
@@ -714,7 +714,7 @@ function SlotDialog({
           {slot.skipped
             ? "Quitado: no presenta nadie."
             : seated
-              ? `${holder ? "Fijado" : "Según la cola"}: ${seated.name}`
+              ? `${holder ? "Fijado" : "Según el orden"}: ${seated.name}`
               : "Libre"}
         </p>
         {seated && !slot.skipped && seated.members.length > 0 && (
@@ -739,7 +739,7 @@ function SlotDialog({
           }}
           className="mt-1 w-full rounded-xl border border-line bg-card px-3 py-2 disabled:text-ink-faint"
         >
-          <option value="">Ninguno: lo llena la cola</option>
+          <option value="">Ninguno: lo llena el orden</option>
           {entries.map((entry) => (
             <option key={entry.projectId} value={entry.projectId}>
               {optionLabel(teamOf(entry.projectId))}
@@ -803,7 +803,7 @@ function SlotDialog({
           onChange={() =>
             edit((d) => setQueueStart(d, block.round, isStart ? null : here))
           }
-          label={`La cola de la ${roundLabel(block.round)} empieza acá`}
+          label={`El orden de la ${roundLabel(block.round)} empieza acá`}
           hint="Los turnos anteriores quedan solo para grupos fijos."
         />
       </div>
