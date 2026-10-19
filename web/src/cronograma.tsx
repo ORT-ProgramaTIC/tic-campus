@@ -331,7 +331,7 @@ function Editor({
         </button>
       </div>
 
-      <div className="grid grid-cols-[minmax(0,1fr)] gap-6 2xl:grid-cols-[minmax(0,1fr)_24rem]">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-6">
         <Section className="min-w-0">
           <WeekGrid
             title="Bloques"
