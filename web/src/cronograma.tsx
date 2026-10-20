@@ -200,6 +200,10 @@ function Editor({
       },
     });
   };
+  const onCancel = () => {
+    save.reset();
+    setDraft(JSON.parse(pristine));
+  };
   const blocker = useBlocker(
     ({ currentLocation, nextLocation }) =>
       dirty && currentLocation.pathname !== nextLocation.pathname,
@@ -260,25 +264,6 @@ function Editor({
           <h1 className="mt-1 text-2xl font-semibold sm:text-3xl">
             Cronograma
           </h1>
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-ink-muted" aria-live="polite">
-            {save.isPending
-              ? "Guardando…"
-              : dirty
-                ? calculating
-                  ? "Calculando…"
-                  : "Cambios sin guardar"
-                : "Guardado"}
-          </span>
-          <button
-            type="button"
-            onClick={onSave}
-            disabled={!dirty || save.isPending || problems.size > 0}
-            className="rounded-xl bg-lilac-300 px-5 py-2.5 font-medium text-ink hover:bg-lilac-500 hover:text-white disabled:bg-lilac-100 disabled:text-ink-faint"
-          >
-            Guardar
-          </button>
         </div>
       </div>
 
@@ -446,6 +431,37 @@ function Editor({
             />
           );
         })()}
+
+      <div className="h-16" aria-hidden />
+      <footer className="fixed inset-x-0 bottom-0 z-10 h-16 border-t border-line bg-card/90 shadow-[0_-4px_12px_rgb(0_0_0/0.06)] backdrop-blur">
+        <div className="mx-auto flex h-full max-w-6xl items-center justify-end gap-3 px-4 sm:px-6">
+          <span className="mr-auto text-sm text-ink-muted" aria-live="polite">
+            {save.isPending
+              ? "Guardando…"
+              : dirty
+                ? calculating
+                  ? "Calculando…"
+                  : "Cambios sin guardar"
+                : "Guardado"}
+          </span>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={!dirty || save.isPending}
+            className="rounded-xl border border-line px-5 py-2.5 font-medium text-ink-muted hover:text-ink disabled:text-ink-faint"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={!dirty || save.isPending || problems.size > 0}
+            className="rounded-xl bg-lilac-300 px-5 py-2.5 font-medium text-ink hover:bg-lilac-500 hover:text-white disabled:bg-lilac-100 disabled:text-ink-faint"
+          >
+            Guardar
+          </button>
+        </div>
+      </footer>
     </div>
   );
 }
@@ -892,6 +908,43 @@ function Queue({
   return (
     <Section>
       <h2 className="text-lg font-semibold">Orden · {roundLabel(round)}</h2>
+      {missing.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <select
+            value=""
+            aria-label="Agregar grupo"
+            onChange={(event) =>
+              edit((d) => addTeam(d, Number(event.target.value), round))
+            }
+            className="min-w-0 flex-1 rounded-xl border border-line bg-card px-3 py-2 text-sm"
+          >
+            <option value="" disabled>
+              Agregar grupo…
+            </option>
+            {missing.map((team) => (
+              <option key={team.projectId} value={team.projectId}>
+                {optionLabel(team)}
+              </option>
+            ))}
+          </select>
+          {missing.length > 1 && (
+            <button
+              type="button"
+              onClick={() =>
+                edit((d) =>
+                  missing.reduce(
+                    (acc, team) => addTeam(acc, team.projectId, round),
+                    d,
+                  ),
+                )
+              }
+              className="rounded-xl px-3 py-2 text-sm font-medium text-lilac-700 hover:bg-lilac-50"
+            >
+              Agregar los {missing.length} que faltan
+            </button>
+          )}
+        </div>
+      )}
       {line.length === 0 && (
         <p className="mt-4 text-sm text-ink-muted">
           Todavía no hay grupos en esta ronda.
@@ -1050,44 +1103,6 @@ function Queue({
           );
         })}
       </ol>
-
-      {missing.length > 0 && (
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          <select
-            value=""
-            aria-label="Agregar grupo"
-            onChange={(event) =>
-              edit((d) => addTeam(d, Number(event.target.value), round))
-            }
-            className="min-w-0 flex-1 rounded-xl border border-line bg-card px-3 py-2 text-sm"
-          >
-            <option value="" disabled>
-              Agregar grupo…
-            </option>
-            {missing.map((team) => (
-              <option key={team.projectId} value={team.projectId}>
-                {optionLabel(team)}
-              </option>
-            ))}
-          </select>
-          {missing.length > 1 && (
-            <button
-              type="button"
-              onClick={() =>
-                edit((d) =>
-                  missing.reduce(
-                    (acc, team) => addTeam(acc, team.projectId, round),
-                    d,
-                  ),
-                )
-              }
-              className="rounded-xl px-3 py-2 text-sm font-medium text-lilac-700 hover:bg-lilac-50"
-            >
-              Agregar los {missing.length} que faltan
-            </button>
-          )}
-        </div>
-      )}
     </Section>
   );
 }
