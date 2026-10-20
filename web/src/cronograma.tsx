@@ -942,7 +942,7 @@ function Queue({
               >
                 <GripVertical className="size-4" />
               </span>
-              <span className="w-5 text-right text-ink-faint tabular-nums">
+              <span className="w-5 text-center text-ink-faint tabular-nums">
                 {index + 1}
               </span>
               {/* Name over state on a phone, side by side from `sm`. */}
