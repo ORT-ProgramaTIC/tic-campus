@@ -1,7 +1,7 @@
 # tic-campus on the ORT VM (tic-platform/PLAN.md §3, M14).
 #
 # `tic-campus-edge` is created by tic-hosting from `[origins.tic-campus]` via
-# `tic apply-config`; compose never creates or deletes it. `tic-db` is
+# `tic-host apply-config`; compose never creates or deletes it. `tic-db` is
 # /opt/tic-platform's, `internal: true` — no gateway, no published port. Names
 # are pinned (DEPLOY-CONVENTIONS.md, "Renaming a compose network").
 #

@@ -53,7 +53,7 @@ deploy:  ## pull, then roll with the freshly pulled Makefile
 rollout:  ## the half of `deploy` after the pull — not called directly
 	@docker network inspect tic-campus-edge >/dev/null 2>&1 || { \
 	  echo "FAIL: the tic-campus-edge network does not exist — add [origins.tic-campus]"; \
-	  echo "      to /var/lib/tic/config.toml and run \`tic apply-config\`."; exit 1; }
+	  echo "      to /var/lib/tic/config.toml and run \`tic-host apply-config\`."; exit 1; }
 	@# The database, in both halves. The network, because compose refuses to start
 	@# without it and its error names only the network; and the container's health,
 	@# because the api comes up against it and would otherwise serve 503s from
