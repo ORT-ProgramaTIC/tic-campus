@@ -3,6 +3,7 @@ import {
   Link,
   NavLink,
   Outlet,
+  useLocation,
   useNavigate,
   useRouteLoaderData,
 } from "react-router";
@@ -67,6 +68,7 @@ const rotationName = (offering: OfferingSummary) =>
 function Rotations({ current }: { current: ResolvedOffering | undefined }) {
   const offerings = useProyectoOfferings();
   const navigate = useNavigate();
+  const location = useLocation();
   if (offerings.length < 2) return null;
 
   return (
@@ -78,7 +80,13 @@ function Rotations({ current }: { current: ResolvedOffering | undefined }) {
           const next = offerings.find(
             (one) => one.offeringId === Number(event.target.value),
           );
-          if (next) navigate(`${next.path}/presentaciones`);
+          if (!next) return;
+          // Same tab in the other rotation; the Cronograma's loader sends
+          // non-staff back to the student page.
+          const tab = current
+            ? location.pathname.slice(current.path.length)
+            : "/presentaciones";
+          navigate(next.path + tab);
         }}
         className="appearance-none rounded-xl border border-line bg-card py-2 pr-8 pl-3 text-sm font-medium"
       >
