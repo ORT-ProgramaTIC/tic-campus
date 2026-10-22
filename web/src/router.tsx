@@ -10,10 +10,11 @@ import {
   meQuery,
   myOfferingsQuery,
   offeringQuery,
+  offeringsQuery,
   queryClient,
-  useMyOfferings,
+  useOfferings,
 } from "./api/queries.ts";
-import type { MyOffering, ResolvedOffering } from "./api/types.ts";
+import type { OfferingSummary, ResolvedOffering } from "./api/types.ts";
 import { Presentaciones } from "./presentaciones.tsx";
 import { Cronograma } from "./cronograma.tsx";
 import { NoProyecto } from "./screens.tsx";
@@ -34,13 +35,14 @@ import { Shell } from "./shell.tsx";
  * are no special subjects. The upgrade is `/api/offerings/mine` carrying each
  * home's `sections` and the header listing those with `presentations` on.
  */
-export function isProyecto(offering: MyOffering): boolean {
+export function isProyecto(offering: OfferingSummary): boolean {
   return offering.subjectName === "Proyecto";
 }
 
-/** The rotation switcher's list: every Proyecto offering of the caller's. */
-export function useProyectoOfferings(): MyOffering[] {
-  return (useMyOfferings().data ?? []).filter(isProyecto);
+/** The rotation switcher's list: every activated Proyecto offering of the
+ *  current year, the caller's or not — any signed-in user reads any of them. */
+export function useProyectoOfferings(): OfferingSummary[] {
+  return (useOfferings().data ?? []).filter(isProyecto);
 }
 
 /** The offering the current URL names, resolved by its layout route — with
@@ -79,11 +81,14 @@ export const router = createBrowserRouter([
       {
         path: "proyecto",
         element: <NoProyecto />,
-        // One offering, or the first of a teacher's rotations (the switcher
+        // The caller's own Proyecto first, else any this year's (the switcher
         // has the rest): straight to its presentations. None: `NoProyecto`.
         loader: async () => {
-          const mine = await queryClient.ensureQueryData(myOfferingsQuery);
-          const first = mine.find(isProyecto);
+          const [mine, all] = await Promise.all([
+            queryClient.ensureQueryData(myOfferingsQuery),
+            queryClient.ensureQueryData(offeringsQuery),
+          ]);
+          const first = mine.find(isProyecto) ?? all.find(isProyecto);
           return first ? redirect(`${first.path}/presentaciones`) : null;
         },
       },

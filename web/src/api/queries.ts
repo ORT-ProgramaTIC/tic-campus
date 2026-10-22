@@ -10,6 +10,7 @@ import { api, rememberCsrf } from "./client.ts";
 import type {
   Me,
   MyOffering,
+  OfferingSummary,
   PresentationState,
   PresentationsPayload,
   PreviewPayload,
@@ -50,6 +51,12 @@ export const myOfferingsQuery = queryOptions({
   queryFn: () => api<MyOffering[]>("GET", "/api/offerings/mine"),
 });
 
+/** Every activated offering of the current year (F6). */
+export const offeringsQuery = queryOptions({
+  queryKey: ["offerings", "current"],
+  queryFn: () => api<OfferingSummary[]>("GET", "/api/offerings"),
+});
+
 export const offeringQuery = (
   year: string,
   subject: string,
@@ -79,6 +86,7 @@ export const presentationsQuery = (offeringId: number) =>
 
 export const useMe = () => useQuery(meQuery);
 export const useMyOfferings = () => useQuery(myOfferingsQuery);
+export const useOfferings = () => useQuery(offeringsQuery);
 export const usePresentations = (offeringId: number) =>
   useQuery(presentationsQuery(offeringId));
 

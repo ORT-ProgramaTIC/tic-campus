@@ -608,6 +608,8 @@ export interface ActiveHome {
   subjectId: number;
   /** The offering's school year, from the directory. */
   year: number;
+  /** The directory's current school year (`is_current`). */
+  isCurrent: boolean;
   /** An admin reopened this offering past its year's lock (F35). */
   unlockedAt: Date | null;
 }
@@ -622,6 +624,7 @@ export async function activeHome(
       homeId: offeringHome.id,
       subjectId: directoryOffering.subjectId,
       year: directoryOffering.year,
+      isCurrent: directoryOffering.isCurrent,
       unlockedAt: offeringHome.unlockedAt,
     })
     .from(offeringHome)

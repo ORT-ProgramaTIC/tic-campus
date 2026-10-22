@@ -24,9 +24,9 @@ import {
  * for the same reason: its segments are ids, not a public URL. **The guard is
  * on the mount** (`index.ts`), so this router has none of its own.
  *
- * **Signed-in only, and not F4-public.** Staff of the offering and its
- * enrolled students read it; anyone else is a `403`, as `/results/mine` is.
- * Writing is `manageOffering`.
+ * **Signed-in only, and not F4-public.** Any signed-in user reads a
+ * current-year schedule, so a student can look at the other rotation's; a past
+ * year's is its staff's and enrolled students' only. Writing is `manageOffering`.
  *
  * No year lock: F35 locks marks, and nothing here is one.
  */
@@ -74,11 +74,11 @@ export function createPresentationRoutes(db: Db): Router {
           offeringId,
           home.subjectId,
         );
-        if (!can.manageOffering && !can.seeOwnMarks) {
+        if (!home.isCurrent && !can.manageOffering && !can.seeOwnMarks) {
           throw new ApiError(
             403,
             "forbidden",
-            "El cronograma lo ve quien cursa o da esta materia.",
+            "El cronograma de otro año lo ve quien cursó o dio esta materia.",
           );
         }
         const [rows, teams, mine, modules] = await Promise.all([

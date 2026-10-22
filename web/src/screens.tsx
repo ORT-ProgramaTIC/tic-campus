@@ -3,11 +3,11 @@
  * their own files.
  */
 
-/** `/proyecto` for someone who takes no Proyecto this year. */
+/** `/proyecto` when no Proyecto offering is activated this year. */
 export function NoProyecto() {
   return (
     <p className="rounded-3xl border border-line bg-card p-6 text-ink-muted">
-      No tenés Proyecto este año.
+      Todavía no hay Proyecto este año.
     </p>
   );
 }

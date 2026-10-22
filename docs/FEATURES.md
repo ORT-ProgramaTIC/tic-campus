@@ -1520,8 +1520,8 @@ student_id, recorded_at DESC)`; `saveOfficialGrades` inserts, and it has to,
     because `project_offering` is not published — so a project nobody has joined is not
     schedulable, and that is a tic-registry row to add.
   - **Every reader sees every team's members** — name, surname and track, never email or
-    DNI. The page is signed-in only and its readers are the offering's own students and
-    teachers, and the timetable's popup is "who presents in this slot" (decided 2026-10-18).
+    DNI. The page is signed-in only, and the timetable's popup is "who presents in this slot"
+    (decided 2026-10-18).
   - **Rotation is the offering.** 2025's `Rotación` column (AB/CD) existed because one sheet
     served two groups of courses. In the directory each rotation is already its own offering
     (2026: 51 is NR4A + NR4C, 52 is NR4B + NR4D), so each home has its own schedule and
@@ -1550,8 +1550,10 @@ student_id, recorded_at DESC)`; `saveOfficialGrades` inserts, and it has to,
   - **States** are `pending`, `presenting`, `presented`, `passed`, `failed` and `absent` —
     2025's Pendiente, Presentando, Presentado, Aprobado, Desaprobado and No Presentan. Text
     checked in the api, no enum (F18).
-  - **Signed-in only.** Staff of the offering and its enrolled students read it; anyone else
-    gets a `403`. Unlike F4's articles this is not public: it is a list of who presents when.
+  - **Signed-in only.** Any signed-in user reads a current-year schedule — the header's switcher
+    lists every activated Proyecto offering, so a student can see the other rotation's (decided
+    2026-10-22). A past year's is its staff's and enrolled students' only, anyone else gets a
+    `403`. Unlike F4's articles this is not public: it is a list of who presents when.
   - **One write for the schedule, one for state.** The teacher saves blocks, slots, order and
     pins in one `PUT`, which **deletes by omission** — the opposite of F15's rule, and safe
     here because nothing points at these rows except the pins the same body rewrites. Two

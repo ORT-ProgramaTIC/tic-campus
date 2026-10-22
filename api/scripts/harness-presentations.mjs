@@ -320,9 +320,11 @@ async function main() {
 
   /* ── Who may not ───────────────────────────────────────────────────────── */
 
+  // A current-year schedule is every signed-in user's to read.
   const outside = await call(outsider, "GET", path);
-  assert.equal(outside.status, 403, "not enrolled, not staff");
-  assert.equal(code(outside), "forbidden");
+  assert.equal(outside.status, 200, "current year: anyone signed in reads it");
+  assert.deepEqual(outside.body.mine, []);
+  assert.equal(outside.body.classBlocks, undefined, "the picker is staff's");
 
   const studentPut = await call(
     student,

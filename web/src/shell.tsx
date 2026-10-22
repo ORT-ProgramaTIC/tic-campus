@@ -63,7 +63,7 @@ export function Shell() {
 const rotationName = (offering: OfferingSummary) =>
   offering.offeringName ?? offering.courseNames.join(" + ");
 
-/** A teacher's Proyecto offerings, one per rotation. Hidden for one. */
+/** Every Proyecto offering this year, one per rotation. Hidden for one. */
 function Rotations({ current }: { current: ResolvedOffering | undefined }) {
   const offerings = useProyectoOfferings();
   const navigate = useNavigate();

@@ -44,7 +44,7 @@ export function Presentaciones() {
         <Notice>{query.error.message}</Notice>
       ) : (
         <>
-          <Banners data={query.data} staff={offering.can.manageOffering} />
+          <Banners data={query.data} enrolled={offering.can.seeOwnMarks} />
           <Timetable data={query.data} />
         </>
       )}
@@ -55,10 +55,10 @@ export function Presentaciones() {
 /** One banner per round the caller's team is queued in. */
 function Banners({
   data,
-  staff,
+  enrolled,
 }: {
   data: PresentationsPayload;
-  staff: boolean;
+  enrolled: boolean;
 }) {
   const rows = data.presentations
     .filter((row) => data.mine.includes(row.projectId))
@@ -67,7 +67,8 @@ function Banners({
   if (rows.length > 0) {
     return rows.map((row) => <TeamBanner key={row.id} row={row} data={data} />);
   }
-  if (staff) return null;
+  // Staff, or a student looking at another rotation's schedule.
+  if (!enrolled) return null;
   if (data.mine.length === 0) {
     return (
       <Notice>
