@@ -197,8 +197,9 @@ export interface Scheduled {
 /**
  * Every team's estimate, per round (F45):
  *
- * 1. A slot is **live** until it ends — so a team presenting right now keeps
- *    the slot it is in, and the current slot is still offered to the queue.
+ * 1. A slot is **live** until its *block* ends — so the estimates inside a
+ *    block hold still while it runs, and the queue rearranges once per block,
+ *    not once per slot.
  * 2. A waiting team pinned to a live slot holds it.
  * 3. A waiting team pinned to a slot that has ended **falls back into the
  *    queue** at its position, flagged `pinMissed`.
@@ -229,8 +230,11 @@ export function schedule(
     const from = all.find(
       (slot) => slot.blockId === start?.blockId && slot.slot === start?.slot,
     );
+    const blockEnds = new Map(
+      blocks.map((b) => [b.id, instant(b.date, BELL[b.block]!.end)]),
+    );
     const slots = all
-      .filter((slot) => !slot.skipped && instant(slot.date, slot.end) > at)
+      .filter((slot) => !slot.skipped && blockEnds.get(slot.blockId)! > at)
       .sort((a, b) => instant(a.date, a.start) - instant(b.date, b.start));
     const key = (blockId: string, slot: number) => `${blockId}/${slot}`;
     const live = new Map(

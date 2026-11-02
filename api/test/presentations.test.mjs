@@ -146,6 +146,18 @@ test("a team presenting right now keeps the slot it is in", () => {
   assert.equal(where(placed, "b"), `${FRI} 11:15`);
 });
 
+test("estimates hold until the whole block is over, not each slot", () => {
+  const blocks = [block("fri", FRI, 3), block("tue", TUE, 1)];
+  const queue = [team("a", 0), team("b", 1)];
+  // `a`'s slot (10:55–11:15) is over, the block (until 12:15) is not.
+  let placed = schedule(blocks, queue, at(FRI, "11:40"));
+  assert.equal(where(placed, "a"), `${FRI} 10:55`);
+  assert.equal(where(placed, "b"), `${FRI} 11:15`);
+  placed = schedule(blocks, queue, at(FRI, "12:16"));
+  assert.equal(where(placed, "a"), `${TUE} 07:45`);
+  assert.equal(where(placed, "b"), `${TUE} 08:05`);
+});
+
 test("rounds do not borrow each other's blocks", () => {
   const blocks = [
     block("r1", FRI, 3, { slotCount: 1 }),

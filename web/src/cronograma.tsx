@@ -889,8 +889,16 @@ function Queue({
   const offering = useOffering();
   const setState = useSetState(offering.offeringId);
   const line = draft.queue.filter((entry) => entry.round === round);
+  // A team approved in an earlier round is done: it is not offered again.
   const missing = teams.filter(
-    (team) => !line.some((entry) => entry.projectId === team.projectId),
+    (team) =>
+      !line.some((entry) => entry.projectId === team.projectId) &&
+      !saved.some(
+        (row) =>
+          row.projectId === team.projectId &&
+          row.round < round &&
+          row.state === "passed",
+      ),
   );
   const rowOf = new Map(
     saved
