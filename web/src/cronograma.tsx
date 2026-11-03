@@ -729,25 +729,32 @@ function StateSelect({
   const setState = useSetState(offering.offeringId);
   const state = row?.state ?? "pending";
   return (
-    <select
-      value={state}
-      disabled={!row || setState.isPending}
-      title={row ? "Estado" : "Guardá para cambiarle el estado"}
-      aria-label={`Estado de ${name}`}
-      onChange={(event) =>
-        setState.mutate({
-          id: row!.id,
-          state: event.target.value as PresentationState,
-        })
-      }
-      className={`rounded-full px-2 py-1 text-xs font-medium ring-1 ring-inset disabled:opacity-60 ${STATE_TONE[state]} ${className ?? ""}`}
+    // The pill is the label, the chevron ours: the native arrow clips on the
+    // rounded end.
+    <label
+      className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset focus-within:outline-2 focus-within:outline-lilac-500 has-disabled:opacity-60 ${STATE_TONE[state]} ${className ?? ""}`}
     >
-      {(Object.keys(STATE_LABEL) as PresentationState[]).map((one) => (
-        <option key={one} value={one}>
-          {STATE_LABEL[one]}
-        </option>
-      ))}
-    </select>
+      <select
+        value={state}
+        disabled={!row || setState.isPending}
+        title={row ? "Estado" : "Guardá para cambiarle el estado"}
+        aria-label={`Estado de ${name}`}
+        onChange={(event) =>
+          setState.mutate({
+            id: row!.id,
+            state: event.target.value as PresentationState,
+          })
+        }
+        className="min-w-0 flex-1 cursor-pointer appearance-none truncate bg-transparent outline-none disabled:cursor-default"
+      >
+        {(Object.keys(STATE_LABEL) as PresentationState[]).map((one) => (
+          <option key={one} value={one}>
+            {STATE_LABEL[one]}
+          </option>
+        ))}
+      </select>
+      <ChevronDown className="size-3.5 shrink-0 opacity-70" aria-hidden />
+    </label>
   );
 }
 
