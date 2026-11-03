@@ -164,12 +164,6 @@ function SlotLine({
         <span className="min-w-0 truncate" title={team.name ?? undefined}>
           {team.name ?? "—"}
         </span>
-        {team.estimate?.pinned && !done && (
-          <Pin
-            className="size-3.5 shrink-0 text-lilac-700"
-            aria-label="Turno fijado"
-          />
-        )}
         {team.state === "presenting" && (
           <span className="ml-auto rounded-full bg-lilac-500 px-1.5 text-xs font-medium text-white">
             ahora
