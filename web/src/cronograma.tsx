@@ -342,6 +342,9 @@ function Editor({
                     problem={problems.get(block.id)}
                     onBlock={() => setEditing({ blockId: block.id })}
                     onSlot={(slot) => setEditing({ blockId: block.id, slot })}
+                    onPin={(projectId, at) =>
+                      edit((d) => pin(d, projectId, block.round, at))
+                    }
                   />
                 );
               }
@@ -425,6 +428,7 @@ function Editor({
                 return id === undefined ? undefined : teams.get(id);
               })()}
               teamOf={teamOf}
+              saved={payload.presentations}
               problem={problems.get(block.id)}
               edit={edit}
               onClose={close}
@@ -504,6 +508,7 @@ function EditBlock({
   problem,
   onBlock,
   onSlot,
+  onPin,
 }: {
   block: DraftBlock;
   slots: Slot[];
@@ -516,6 +521,10 @@ function EditBlock({
   problem: string | undefined;
   onBlock: () => void;
   onSlot: (slot: number) => void;
+  onPin: (
+    projectId: number,
+    at: { blockId: string; slot: number } | null,
+  ) => void;
 }) {
   // Slots before the round's start are the queue's to skip: pins only.
   const startAt = start?.blockId === block.id ? start.slot : undefined;
@@ -540,18 +549,26 @@ function EditBlock({
       <ul className="flex flex-col gap-0.5">
         {slots.map((slot) => {
           const who = seated.get(`${block.id}/${slot.slot}`);
-          const fixed = pinned.some(
+          const fixed = pinned.find(
             (entry) =>
-              entry.pin?.blockId === block.id && entry.pin.slot === slot.slot,
+              entry.round === block.round &&
+              entry.pin?.blockId === block.id &&
+              entry.pin.slot === slot.slot,
           );
+          // The pin toggles: off for the fixed team, on for whoever the
+          // queue seated here.
+          const pinFor = fixed?.projectId ?? (slot.skipped ? undefined : who);
           return (
-            <li key={slot.slot}>
+            <li
+              key={slot.slot}
+              className={`flex items-center rounded-lg pr-1.5 text-sm hover:ring-1 hover:ring-lilac-300 ${
+                slot.skipped || who === undefined ? "" : "bg-card"
+              }`}
+            >
               <button
                 type="button"
                 onClick={() => onSlot(slot.slot)}
-                className={`flex w-full items-center gap-1.5 rounded-lg px-1.5 py-1 text-left text-sm hover:ring-1 hover:ring-lilac-300 ${
-                  slot.skipped || who === undefined ? "" : "bg-card"
-                }`}
+                className="flex min-w-0 flex-1 items-center gap-1.5 px-1.5 py-1 text-left"
               >
                 <span
                   className={`w-10 shrink-0 tabular-nums ${
@@ -576,21 +593,37 @@ function EditBlock({
                     libre
                   </span>
                 )}
-                <span className="ml-auto flex shrink-0 items-center gap-1">
-                  {fixed && (
-                    <Pin
-                      className="size-3.5 text-lilac-700"
-                      aria-label="Turno fijado"
-                    />
-                  )}
-                  {startAt === slot.slot && (
-                    <Play
-                      className="size-3.5 fill-current text-lilac-700"
-                      aria-label="El orden empieza acá"
-                    />
-                  )}
-                </span>
               </button>
+              <span className="flex shrink-0 items-center gap-1">
+                {pinFor !== undefined && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onPin(
+                        pinFor,
+                        fixed ? null : { blockId: block.id, slot: slot.slot },
+                      )
+                    }
+                    aria-pressed={!!fixed}
+                    aria-label={fixed ? "Desfijar grupo" : "Fijar grupo"}
+                    title={fixed ? "Desfijar grupo" : "Fijar grupo"}
+                    className={`rounded p-0.5 hover:bg-lilac-100 ${
+                      fixed ? "text-lilac-700" : "text-ink-faint/50"
+                    }`}
+                  >
+                    <Pin
+                      className={`size-3.5 ${fixed ? "fill-current" : ""}`}
+                      aria-hidden
+                    />
+                  </button>
+                )}
+                {startAt === slot.slot && (
+                  <Play
+                    className="size-3.5 fill-current text-lilac-700"
+                    aria-label="El orden empieza acá"
+                  />
+                )}
+              </span>
             </li>
           );
         })}
@@ -681,6 +714,43 @@ function StepButton({
   );
 }
 
+/** A saved row's state, saved on change on its own — no Guardar. A row not
+ *  saved yet has none to change. */
+function StateSelect({
+  row,
+  name,
+  className,
+}: {
+  row: Presentation | undefined;
+  name: string;
+  className?: string;
+}) {
+  const offering = useOffering();
+  const setState = useSetState(offering.offeringId);
+  const state = row?.state ?? "pending";
+  return (
+    <select
+      value={state}
+      disabled={!row || setState.isPending}
+      title={row ? "Estado" : "Guardá para cambiarle el estado"}
+      aria-label={`Estado de ${name}`}
+      onChange={(event) =>
+        setState.mutate({
+          id: row!.id,
+          state: event.target.value as PresentationState,
+        })
+      }
+      className={`rounded-full px-2 py-1 text-xs font-medium ring-1 ring-inset disabled:opacity-60 ${STATE_TONE[state]} ${className ?? ""}`}
+    >
+      {(Object.keys(STATE_LABEL) as PresentationState[]).map((one) => (
+        <option key={one} value={one}>
+          {STATE_LABEL[one]}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 /** One slot: who is fixed to it, when it starts, struck or not, and whether
  *  the round's queue starts here. Every change is a draft edit, live. */
 function SlotDialog({
@@ -690,6 +760,7 @@ function SlotDialog({
   draft,
   seated,
   teamOf,
+  saved,
   problem,
   edit,
   onClose,
@@ -700,6 +771,7 @@ function SlotDialog({
   draft: Draft;
   seated: Team | undefined;
   teamOf: (projectId: number) => Team | undefined;
+  saved: Presentation[];
   problem: string | undefined;
   edit: (change: (draft: Draft) => Draft) => void;
   onClose: () => void;
@@ -735,6 +807,28 @@ function SlotDialog({
         </p>
         {seated && !slot.skipped && seated.members.length > 0 && (
           <p className="text-xs text-ink-faint">{surnames(seated)}</p>
+        )}
+        {holder && (
+          <StateSelect
+            row={saved.find(
+              (row) =>
+                row.round === block.round && row.projectId === holder.projectId,
+            )}
+            name={surnames(teamOf(holder.projectId))}
+            className="mt-3"
+          />
+        )}
+        {seated && !slot.skipped && !holder && (
+          <button
+            type="button"
+            onClick={() =>
+              edit((d) => pin(d, seated.projectId, block.round, here))
+            }
+            className="mt-3 flex items-center gap-1.5 rounded-xl border border-line bg-card px-3 py-1.5 text-sm font-medium text-lilac-700 hover:bg-lilac-100"
+          >
+            <Pin className="size-4" aria-hidden />
+            Pinnear grupo actual
+          </button>
         )}
       </div>
 
@@ -887,7 +981,6 @@ function Queue({
   onInfo: (projectId: number) => void;
 }) {
   const offering = useOffering();
-  const setState = useSetState(offering.offeringId);
   const line = draft.queue.filter((entry) => entry.round === round);
   // A team approved in an earlier round is done: it is not offered again.
   const missing = teams.filter(
@@ -1038,27 +1131,11 @@ function Queue({
                         : "sin turno"}
                   </p>
                 </div>
-                <select
-                  value={state}
-                  disabled={!row || setState.isPending}
-                  title={row ? "Estado" : "Guardá para cambiarle el estado"}
-                  aria-label={`Estado de ${name}`}
-                  onChange={(event) =>
-                    setState.mutate({
-                      id: row!.id,
-                      state: event.target.value as PresentationState,
-                    })
-                  }
-                  className={`max-w-32 self-start rounded-full px-2 py-1 text-xs sm:self-auto font-medium ring-1 ring-inset disabled:opacity-60 ${STATE_TONE[state]}`}
-                >
-                  {(Object.keys(STATE_LABEL) as PresentationState[]).map(
-                    (one) => (
-                      <option key={one} value={one}>
-                        {STATE_LABEL[one]}
-                      </option>
-                    ),
-                  )}
-                </select>
+                <StateSelect
+                  row={row}
+                  name={name}
+                  className="max-w-32 self-start sm:self-auto"
+                />
               </div>
               <button
                 type="button"

@@ -178,6 +178,22 @@ test("a finished team has no estimate and frees its place in the queue", () => {
   assert.equal(where(placed, "b"), `${FRI} 10:55`);
 });
 
+test("a pinned team that presented keeps its slot, even once it is over", () => {
+  const blocks = [block("fri", FRI, 1), block("tue", TUE, 1)];
+  const queue = [
+    team("a", 0, { state: "passed", pinnedBlockId: "fri", pinnedSlot: 1 }),
+    team("b", 1, { state: "absent", pinnedBlockId: "fri", pinnedSlot: 2 }),
+    team("c", 2),
+  ];
+  let placed = schedule(blocks, queue, BEFORE);
+  assert.equal(where(placed, "a"), `${FRI} 07:45`);
+  assert.equal(placed.get("a").estimate.pinned, true);
+  assert.equal(placed.get("b").estimate, null);
+  assert.equal(where(placed, "c"), `${FRI} 08:05`);
+  placed = schedule(blocks, queue, at(FRI, "12:00"));
+  assert.equal(where(placed, "a"), `${FRI} 07:45`);
+});
+
 test("the body checker takes the shape and refuses the obvious garbage", () => {
   const id = "5f8e1c9a-2b3d-4e5f-8a9b-0c1d2e3f4a5b";
   const ok = checkSchedule({

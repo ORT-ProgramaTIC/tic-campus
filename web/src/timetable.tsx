@@ -1,4 +1,4 @@
-import { Pin } from "lucide-react";
+import { Check, Pin } from "lucide-react";
 import { useState } from "react";
 import type {
   Block,
@@ -15,7 +15,8 @@ import { ended, openingWeek, weeksOf } from "./weeks.ts";
  * Every team's slot, a week at a time (`WeekGrid`). The arrows go only to
  * weeks that have blocks.
  *
- * Only waiting teams have a slot (`estimate`): one that already presented has
+ * Only waiting teams have a slot (`estimate`), plus a pinned team that already
+ * presented, which keeps its slot with a check; any other finished team has
  * none, so a past slot shows dimmed and empty.
  */
 export function Timetable({ data }: { data: PresentationsPayload }) {
@@ -149,6 +150,7 @@ function SlotLine({
     );
   }
   const ours = mine.has(team.projectId);
+  const done = ["presented", "passed", "failed"].includes(team.state);
   return (
     <li>
       <button
@@ -162,7 +164,7 @@ function SlotLine({
         <span className="min-w-0 truncate" title={team.name ?? undefined}>
           {team.name ?? "—"}
         </span>
-        {team.estimate?.pinned && (
+        {team.estimate?.pinned && !done && (
           <Pin
             className="size-3.5 shrink-0 text-lilac-700"
             aria-label="Turno fijado"
@@ -171,6 +173,11 @@ function SlotLine({
         {team.state === "presenting" && (
           <span className="ml-auto rounded-full bg-lilac-500 px-1.5 text-xs font-medium text-white">
             ahora
+          </span>
+        )}
+        {done && (
+          <span className="ml-auto rounded-full bg-lilac-500 p-0.5 text-white">
+            <Check className="size-3" aria-label="Ya presentó" />
           </span>
         )}
       </button>

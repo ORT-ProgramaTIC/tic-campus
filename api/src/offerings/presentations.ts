@@ -205,7 +205,9 @@ export interface Scheduled {
  *    queue** at its position, flagged `pinMissed`.
  * 4. The queue — every other waiting team, by position — takes the live free
  *    slots in time order. Whoever does not fit has no estimate yet.
- * 5. A finished team has no estimate, as in 2025.
+ * 5. A finished team has no estimate, as in 2025 — unless it was presented,
+ *    passed or failed while pinned: then it keeps its pinned slot, past or
+ *    not, so the grid shows who presented there, and the queue skips it.
  *
  * **A struck slot is given to nobody**, queue or pin. **A round's start**, if
  * the teacher set one, is where the queue begins: earlier slots are skipped by
@@ -248,7 +250,19 @@ export function schedule(
       .sort((a, b) => a.position - b.position);
     for (const entry of entries) {
       if (!waiting(entry.state)) {
-        out.set(entry.id, { estimate: null, pinMissed: false });
+        const kept =
+          entry.state !== "absent" &&
+          all.find(
+            (slot) =>
+              slot.blockId === entry.pinnedBlockId &&
+              slot.slot === entry.pinnedSlot &&
+              !slot.skipped,
+          );
+        if (kept) taken.add(key(kept.blockId, kept.slot));
+        out.set(entry.id, {
+          estimate: kept ? { ...kept, pinned: true } : null,
+          pinMissed: false,
+        });
         continue;
       }
       if (entry.pinnedBlockId !== null && entry.pinnedSlot !== null) {
