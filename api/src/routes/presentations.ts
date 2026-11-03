@@ -108,7 +108,14 @@ export function createPresentationRoutes(db: Db): Router {
             name: names.get(entry.projectId) ?? null,
             round: entry.round,
             position: entry.position,
-            state: entry.state,
+            // A grade is the team's and the staff's: everyone else sees
+            // that it presented, not how it went.
+            state:
+              can.manageOffering ||
+              mine.includes(entry.projectId) ||
+              (entry.state !== "passed" && entry.state !== "failed")
+                ? entry.state
+                : "presented",
             pin:
               entry.pinnedBlockId === null
                 ? null

@@ -324,6 +324,14 @@ async function main() {
   const outside = await call(outsider, "GET", path);
   assert.equal(outside.status, 200, "current year: anyone signed in reads it");
   assert.deepEqual(outside.body.mine, []);
+  const graded = (body) =>
+    body.presentations.find((p) => p.projectId === ids.alpha).state;
+  assert.equal(graded(outside.body), "presented", "a grade is not public");
+  assert.equal(
+    graded((await call(student, "GET", path)).body),
+    "passed",
+    "the team sees its own grade",
+  );
   assert.equal(outside.body.classBlocks, undefined, "the picker is staff's");
 
   const studentPut = await call(
