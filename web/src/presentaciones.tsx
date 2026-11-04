@@ -173,7 +173,7 @@ function Note({ row, finished }: { row: Presentation; finished: boolean }) {
   if (row.pinMissed) {
     return line(
       RotateCcw,
-      "Su turno fijo pasó sin que presentaran, así que volvieron a la fila.",
+      "Su turno fijo se quitó, así que volvieron a la fila.",
     );
   }
   if (row.estimate.pinned) return line(Pin, "Turno fijado por tu profe.");

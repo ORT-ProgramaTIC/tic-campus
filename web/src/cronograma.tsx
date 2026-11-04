@@ -1130,7 +1130,7 @@ function Queue({
                     {team && team.members.length > 0 && (
                       <span className="text-ink">{team.name} · </span>
                     )}
-                    {at?.pinMissed && "Su turno fijo pasó · "}
+                    {at?.pinMissed && "Su turno fijo se quitó · "}
                     {at?.estimate
                       ? `${shortDay(at.estimate.date)} · ${at.estimate.start}`
                       : FINISHED.includes(state)

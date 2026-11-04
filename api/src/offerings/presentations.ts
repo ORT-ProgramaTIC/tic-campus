@@ -189,8 +189,8 @@ export interface Estimate extends Slot {
 
 export interface Scheduled {
   estimate: Estimate | null;
-  /** Pinned to a slot that ended with the team still waiting, so placed by the
-   *  queue instead. The teacher's view flags it; nothing waits on them. */
+  /** Pinned to a slot struck since, with the team still waiting, so placed by
+   *  the queue instead. The teacher's view flags it; nothing waits on them. */
   pinMissed: boolean;
 }
 
@@ -200,8 +200,9 @@ export interface Scheduled {
  * 1. A slot is **live** until its *block* ends — so the estimates inside a
  *    block hold still while it runs, and the queue rearranges once per block,
  *    not once per slot.
- * 2. A waiting team pinned to a live slot holds it.
- * 3. A waiting team pinned to a slot that has ended **falls back into the
+ * 2. A waiting team pinned to a slot **always holds it**, even once its block
+ *    has ended: a pin is the teacher's word, and only unpinning undoes it.
+ * 3. A waiting team pinned to a slot struck since **falls back into the
  *    queue** at its position, flagged `pinMissed`.
  * 4. The queue — every other waiting team, by position — takes the live free
  *    slots in time order. Whoever does not fit has no estimate yet.
@@ -239,9 +240,6 @@ export function schedule(
       .filter((slot) => !slot.skipped && blockEnds.get(slot.blockId)! > at)
       .sort((a, b) => instant(a.date, a.start) - instant(b.date, b.start));
     const key = (blockId: string, slot: number) => `${blockId}/${slot}`;
-    const live = new Map(
-      slots.map((slot) => [key(slot.blockId, slot.slot), slot]),
-    );
     const taken = new Set<string>();
     const line: QueueEntry[] = [];
 
@@ -266,10 +264,14 @@ export function schedule(
         continue;
       }
       if (entry.pinnedBlockId !== null && entry.pinnedSlot !== null) {
-        const pinKey = key(entry.pinnedBlockId, entry.pinnedSlot);
-        const slot = live.get(pinKey);
+        const slot = all.find(
+          (one) =>
+            one.blockId === entry.pinnedBlockId &&
+            one.slot === entry.pinnedSlot &&
+            !one.skipped,
+        );
         if (slot) {
-          taken.add(pinKey);
+          taken.add(key(slot.blockId, slot.slot));
           out.set(entry.id, {
             estimate: { ...slot, pinned: true },
             pinMissed: false,

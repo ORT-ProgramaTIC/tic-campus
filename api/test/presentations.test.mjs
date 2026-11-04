@@ -123,7 +123,7 @@ test("a pin holds its slot and the queue flows around it", () => {
   assert.equal(where(placed, "c"), `${FRI} 11:35`);
 });
 
-test("a missed pin falls back into the queue at its position, flagged", () => {
+test("a pin holds its slot after its block ends, with the team still pending", () => {
   const blocks = [block("fri", FRI, 1), block("tue", TUE, 1)];
   const queue = [
     team("a", 0, { pinnedBlockId: "fri", pinnedSlot: 1 }),
@@ -131,10 +131,10 @@ test("a missed pin falls back into the queue at its position, flagged", () => {
   ];
   // Friday's first block is over, and `a` is still pending.
   const placed = schedule(blocks, queue, at(FRI, "12:00"));
-  assert.equal(placed.get("a").pinMissed, true);
-  assert.equal(placed.get("a").estimate.pinned, false);
-  assert.equal(where(placed, "a"), `${TUE} 07:45`);
-  assert.equal(where(placed, "b"), `${TUE} 08:05`);
+  assert.equal(placed.get("a").pinMissed, false);
+  assert.equal(placed.get("a").estimate.pinned, true);
+  assert.equal(where(placed, "a"), `${FRI} 07:45`);
+  assert.equal(where(placed, "b"), `${TUE} 07:45`);
 });
 
 test("a team presenting right now keeps the slot it is in", () => {
@@ -281,14 +281,17 @@ test("the queue begins at the round's start, even with earlier slots still ahead
 });
 
 test("a pin before the start still holds; a missed pin lands after the start", () => {
-  const blocks = [block("thu", "2026-11-12", 3), block("fri", FRI, 3)];
+  const blocks = [
+    block("thu", "2026-11-12", 3, { skippedSlots: [1] }),
+    block("fri", FRI, 3),
+  ];
   const queue = [
     team("early", 0, { pinnedBlockId: "fri", pinnedSlot: 1 }),
     team("missed", 1, { pinnedBlockId: "thu", pinnedSlot: 1 }),
     team("c", 2),
   ];
   const starts = [{ round: 1, blockId: "fri", slot: 2 }];
-  // Thursday is over; Friday has not started.
+  // Thursday's first slot was struck after `missed` was pinned to it.
   const placed = schedule(blocks, queue, at(FRI, "07:00"), starts);
   assert.equal(
     where(placed, "early"),
