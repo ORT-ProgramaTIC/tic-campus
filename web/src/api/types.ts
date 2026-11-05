@@ -193,3 +193,44 @@ export interface PreviewPayload {
   blocks: Block[];
   presentations: PreviewRow[];
 }
+
+/* ── Proyecto grades (`api/src/offerings/project-grades.ts`, F46) ────────── */
+
+export type ProjectGradeValue =
+  "10" | "9" | "8" | "7" | "6" | "pia" | "diciembre";
+
+export interface ProjectRef {
+  name: string;
+  /** tic-registry's slug; `trackLabel` reads it. */
+  track: string;
+}
+
+/** One row of `GET /api/homes/:offeringId/project-grades`. */
+export interface GradeRow {
+  studentId: number;
+  name: string | null;
+  surname: string | null;
+  /** `NR4A`; `null` for someone who left. */
+  course: string | null;
+  projects: ProjectRef[];
+  /** `false`: left the offering, still holds a grade here. */
+  enrolled: boolean;
+  grade: { value: ProjectGradeValue; visible: boolean } | null;
+}
+
+export interface ProjectGradesPayload {
+  rows: GradeRow[];
+  /** The year is closed (F35): render without controls. */
+  locked: boolean;
+}
+
+/** `GET …/project-grades/mine`: `grade` is `null` unless visible (F50). */
+export interface MyProjectGrade {
+  grade: ProjectGradeValue | null;
+  projects: ProjectRef[];
+}
+
+/** `PUT …/project-grades`. `value: null` clears. */
+export type ProjectGradeEntry =
+  | { studentId: number; value: null }
+  | { studentId: number; value: ProjectGradeValue; visible: boolean };

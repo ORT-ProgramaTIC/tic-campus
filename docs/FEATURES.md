@@ -90,11 +90,11 @@ Every item, in order.
 | F43 · A brand redesign, not today's identity                | open     | below                                                           |
 | F44 · The interface is built by hand                        | decided  | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
 | F45 · Presentation schedule                                 | building | below                                                           |
-| F46 · The Proyecto grade table                              | decided  | below                                                           |
-| F47 · Notas: the staff tab                                  | decided  | below                                                           |
-| F48 · Notas: search                                         | decided  | below                                                           |
-| F49 · Track colours                                         | decided  | below                                                           |
-| F50 · Nota: the student tab                                 | decided  | below                                                           |
+| F46 · The Proyecto grade table                              | building | below                                                           |
+| F47 · Notas: the staff tab                                  | building | below                                                           |
+| F48 · Notas: search                                         | building | below                                                           |
+| F49 · Track colours                                         | building | below                                                           |
+| F50 · Nota: the student tab                                 | building | below                                                           |
 
 ---
 
@@ -273,7 +273,7 @@ after F45. Two tabs: **Notas** for staff (F47) and **Nota** for students (F50).
 
 ### F46 · The Proyecto grade table
 
-- [ ] **Status:** decided
+- [ ] **Status:** building
 - **Prior art:** F22's `official_grade` (a typed grade per student per term) and F18/F19's
   scale activity (a named scale, published per activity). Both are close, and neither fits.
 - **Decision:** **A table of its own, `campus.project_grade`**: related to the gradebook's
@@ -318,7 +318,7 @@ after F45. Two tabs: **Notas** for staff (F47) and **Nota** for students (F50).
 
 ### F47 · Notas: the staff tab
 
-- [ ] **Status:** decided
+- [ ] **Status:** building
 - **Decision:** A course tab, `/:year/:subject/:offering/notas`, beside Presentaciones and
   Cronograma in the local nav. Staff only: the offering's teachers and admins
   (`capabilitiesFor` gives admins `ALL`). Anyone else is redirected to the student page,
@@ -364,13 +364,14 @@ after F45. Two tabs: **Notas** for staff (F47) and **Nota** for students (F50).
   - **Clearing asks first** ("¿Borrar la nota de Ana Gómez?"), and it's the only edit
     that does (decided 2026-11-05). A clear deletes the pair's whole history (F46), so
     it's the one change on the tab that can't be undone.
-  - **Past years are read-only** (F35): the `PUT` is a `403`, and the tab renders without
-    controls.
+  - **Past years are read-only** (F35): the `PUT` takes `assertUnlocked`, the
+    gradebook's lock, so a closed year is `409 locked` and an admin's unlock is the way
+    through. The `GET` carries `locked`, and the tab renders without controls.
   - **Mobile:** the table scrolls inside its card, with Apellido sticky.
 
 ### F48 · Notas: search
 
-- [ ] **Status:** decided
+- [ ] **Status:** building
 - **Prior art:** tic-registry's Proyectos screen: a "Buscar por" select (Nombre proyecto /
   Nombre integrante) beside a text input, and `fold` plus a word-wise matcher in
   `web/src/lib/text.ts`.
@@ -383,7 +384,7 @@ after F45. Two tabs: **Notas** for staff (F47) and **Nota** for students (F50).
 
 ### F49 · Track colours
 
-- [ ] **Status:** decided
+- [ ] **Status:** building
 - **Prior art:** tic-registry's `subjectColor` (`web/src/lib/timetableColors.ts`), keyed by
   track label because track labels are the seminar subject names. Its colours are
   measured against AA, and IOT is flipped to ink.
@@ -395,7 +396,7 @@ after F45. Two tabs: **Notas** for staff (F47) and **Nota** for students (F50).
 
 ### F50 · Nota: the student tab
 
-- [ ] **Status:** decided
+- [ ] **Status:** building
 - **Decision:** A course tab, `/:year/:subject/:offering/nota`, for students enrolled in
   the offering (`seeOwnMarks`). Decided 2026-11-05.
 

@@ -32,6 +32,42 @@
   --color-sky-soft: #ddf2ff;
   --color-peach-soft: #ffede6;
   --color-mint-soft: #dff7e9;
+
+  /* Proyecto grades (F47): 10 green to 6 yellow at one lightness (oklch L 0.90,
+     hue 145 → 95), PIA orange, DICIEMBRE red. Each text/background pair is
+     measured: 7.4:1 for the numbers, 5.5:1 for the two labels. */
+  --color-grade-10: #a6f5a8;
+  --color-grade-10-ink: #1e4e22;
+  --color-grade-9: #bef095;
+  --color-grade-9-ink: #304c12;
+  --color-grade-8: #d3eb85;
+  --color-grade-8-ink: #3d4900;
+  --color-grade-7: #e8e479;
+  --color-grade-7-ink: #484500;
+  --color-grade-6: #f9dd73;
+  --color-grade-6-ink: #524100;
+  --color-grade-pia: #ffc181;
+  --color-grade-pia-ink: #813200;
+  --color-grade-diciembre: #ffbbb3;
+  --color-grade-diciembre-ink: #892122;
+
+  /* Track colours (F49), tic-registry's `--color-tag-*` and
+     `--color-subject-frontend` as they are, with the ink they are measured
+     against (`#0c043f`, AA on every pair it takes). */
+  --color-tag-ink: #0c043f;
+  --color-tag-ia: #9fea18;
+  --color-tag-app: #f2cb00;
+  --color-tag-juegos: #2ab9ff;
+  --color-tag-rv: #00ead0;
+  --color-tag-satelite: #ff6c31;
+  --color-tag-iot: #ed57ec;
+  --color-tag-blockchain: #390040;
+  --color-tag-3d: #008080;
+  --color-tag-arte: #e9d2f4;
+  --color-tag-hardware: #cc2624;
+  --color-tag-impacto-social: #a431ff;
+  --color-subject-frontend: #4d4dff;
+  --color-line-soft: #efedf3;
 }
 
 body {

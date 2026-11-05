@@ -17,6 +17,8 @@ import {
 import type { OfferingSummary, ResolvedOffering } from "./api/types.ts";
 import { Presentaciones } from "./presentaciones.tsx";
 import { Cronograma } from "./cronograma.tsx";
+import { Nota } from "./nota.tsx";
+import { Notas } from "./notas.tsx";
 import { NoProyecto } from "./screens.tsx";
 import { Shell } from "./shell.tsx";
 
@@ -107,6 +109,32 @@ export const router = createBrowserRouter([
             loader: async (args) => {
               const offering = await resolve(args);
               return offering.can.manageOffering
+                ? null
+                : redirect(`${offering.path}/presentaciones`);
+            },
+          },
+          {
+            path: "notas",
+            element: <Notas />,
+            // Staff only (F47), Cronograma's rule.
+            loader: async (args) => {
+              const offering = await resolve(args);
+              return offering.can.manageOffering
+                ? null
+                : redirect(`${offering.path}/presentaciones`);
+            },
+          },
+          {
+            path: "nota",
+            element: <Nota />,
+            // The enrolled student's own (F50). Staff go to the table;
+            // anyone else to the page they can read.
+            loader: async (args) => {
+              const offering = await resolve(args);
+              if (offering.can.manageOffering) {
+                return redirect(`${offering.path}/notas`);
+              }
+              return offering.can.seeOwnMarks
                 ? null
                 : redirect(`${offering.path}/presentaciones`);
             },

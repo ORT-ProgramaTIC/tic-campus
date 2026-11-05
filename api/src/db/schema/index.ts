@@ -16,6 +16,7 @@ export * from "./offering-home.js";
 export * from "./official-grade.js";
 export * from "./presentation.js";
 export * from "./program-unit.js";
+export * from "./project-grade.js";
 export * from "./redo-covers.js";
 export * from "./result.js";
 export * from "./revision-request.js";

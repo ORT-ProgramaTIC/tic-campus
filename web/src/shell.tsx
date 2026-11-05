@@ -6,14 +6,16 @@ import {
   useLocation,
   useRouteLoaderData,
 } from "react-router";
-import { useLogout, useMe } from "./api/queries.ts";
+import { useLogout, useMe, useMyOfferings } from "./api/queries.ts";
 import type { ResolvedOffering } from "./api/types.ts";
+import { isProyecto } from "./router.tsx";
 
 /**
  * The thin header (`project-tic-campus-navigation-shell`): only Proyecto is
- * live this year, so it is the one item and always the current one. Staff of
- * the offering get the local nav under it — the student page and the
- * Cronograma. Each course tab draws its own rotation select (`Rotations`).
+ * live this year, so it is the one item and always the current one. Under it,
+ * the local nav: Presentaciones, Cronograma and Notas for staff, Presentaciones
+ * and Nota for a student. Each course tab draws its own rotation select
+ * (`Rotations`); Nota has none (F50).
  */
 export function Shell() {
   // Undefined outside an offering's routes (`/proyecto` with none).
@@ -49,7 +51,7 @@ export function Shell() {
             <Profile />
           </div>
         </div>
-        {offering?.can.manageOffering && <LocalNav offering={offering} />}
+        {offering && <LocalNav offering={offering} />}
       </header>
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
         <Outlet />
@@ -121,6 +123,13 @@ function LocalNav({ offering }: { offering: ResolvedOffering }) {
     offering.path,
   );
   const to = (rest: string) => (lastRotation.get(rest) ?? offering.path) + rest;
+  // A student's Nota is always their own rotation's (F50), whichever
+  // rotation's Presentaciones they are reading.
+  const own = useMyOfferings().data?.find(
+    (one) => isProyecto(one) && one.roles.includes("student"),
+  );
+  const staff = offering.can.manageOffering;
+  if (!staff && !own) return null;
   const tab = ({ isActive }: { isActive: boolean }) =>
     `-mb-px border-b-2 px-1 py-3 text-sm font-medium ${
       isActive
@@ -132,9 +141,20 @@ function LocalNav({ offering }: { offering: ResolvedOffering }) {
       <NavLink to={to("/presentaciones")} end className={tab}>
         Presentaciones
       </NavLink>
-      <NavLink to={to("/presentaciones/cronograma")} className={tab}>
-        Cronograma
-      </NavLink>
+      {staff ? (
+        <>
+          <NavLink to={to("/presentaciones/cronograma")} className={tab}>
+            Cronograma
+          </NavLink>
+          <NavLink to={to("/notas")} className={tab}>
+            Notas
+          </NavLink>
+        </>
+      ) : (
+        <NavLink to={`${own!.path}/nota`} className={tab}>
+          Nota
+        </NavLink>
+      )}
     </nav>
   );
 }

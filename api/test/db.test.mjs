@@ -71,6 +71,11 @@ import {
   publishedOnly,
 } from "../dist/offerings/marks.js";
 import {
+  myProjectGrade,
+  readProjectGrades,
+  saveProjectGrades,
+} from "../dist/offerings/project-grades.js";
+import {
   myOfficialGrades,
   officialGradeHistory,
   readOfficialGrades,
@@ -3158,6 +3163,146 @@ test(
         rows = await readSchedule(db, home.homeId);
         assert.deepEqual([rows.blocks.length, rows.queue.length], [0, 0]);
         assert.deepEqual(rows.queueStarts, []);
+
+        assert.equal(await deactivate(db, ids.optional), true);
+      },
+    );
+
+    await t.test(
+      "Proyecto grades: roster, append-only, visible only to the student (F46)",
+      async () => {
+        // The Proyecto offering again; its teams Alfa (Cami, plus an archived
+        // project) and Beta (Fede) come from the presentations subtest.
+        await activate(db, ids.optional, ids.admin);
+        const home = await activeHome(db, ids.optional);
+        const one = async (sql, values) =>
+          (await root.query(sql, values)).rows[0];
+        const fede = (
+          await one(`select id from "user" where email = 'fede@ort.edu.ar'`)
+        ).id;
+        const gabi = (
+          await one(
+            `insert into "user" (email, name, surname) values ('gabi@ort.edu.ar', 'Gabi', 'Sinproyecto') returning id`,
+          )
+        ).id;
+        await root.query(
+          `insert into student_course (student_id, course_id) values ($1, $2)`,
+          [gabi, ids.nr5a],
+        );
+        // An optional offering's roster is `student_offering`, not the course.
+        for (const id of [ids.student, fede, gabi]) {
+          await root.query(
+            `insert into student_offering (student_id, course_id, offering_id) values ($1, $2, $3)`,
+            [id, ids.nr5a, ids.optional],
+          );
+        }
+
+        let rows = await readProjectGrades(db, ids.optional, home.homeId);
+        assert.deepEqual(
+          rows.map((row) => [
+            row.surname,
+            row.name,
+            row.course,
+            row.projects.map((project) => project.name),
+            row.enrolled,
+            row.grade,
+          ]),
+          [
+            ["Alumne", "Cami", "NR5A", ["Alfa"], true, null],
+            ["Alumne", "Fede", "NR5A", ["Beta"], true, null],
+            ["Sinproyecto", "Gabi", "NR5A", [], true, null],
+          ],
+          "an archived project is not listed; no project is an empty list",
+        );
+        assert.deepEqual(rows[0].projects, [
+          { name: "Alfa", track: "backend" },
+        ]);
+
+        const save = (entries) =>
+          saveProjectGrades(
+            db,
+            ids.optional,
+            home.homeId,
+            entries,
+            ids.teacher,
+          );
+        const mine = (id) => myProjectGrade(db, ids.optional, home.homeId, id);
+
+        await save([
+          { studentId: ids.student, clear: false, value: "9", visible: false },
+        ]);
+        assert.deepEqual(
+          await mine(ids.student),
+          { grade: null, projects: [{ name: "Alfa", track: "backend" }] },
+          "a hidden grade reads as no grade",
+        );
+        await save([
+          { studentId: ids.student, clear: false, value: "9", visible: true },
+          { studentId: fede, clear: false, value: "pia", visible: true },
+        ]);
+        assert.equal((await mine(ids.student)).grade, "9");
+        await save([
+          { studentId: ids.student, clear: false, value: "10", visible: true },
+        ]);
+        assert.equal((await mine(ids.student)).grade, "10", "newest row wins");
+        const history = await one(
+          `select count(*)::int as n from campus.project_grade where student_id = $1`,
+          [ids.student],
+        );
+        assert.equal(history.n, 3, "every change, visibility too, is a row");
+
+        rows = await readProjectGrades(db, ids.optional, home.homeId);
+        assert.deepEqual(
+          rows.map((row) => row.grade),
+          [
+            { value: "10", visible: true },
+            { value: "pia", visible: true },
+            null,
+          ],
+        );
+
+        await save([{ studentId: ids.student, clear: true }]);
+        assert.equal(
+          (
+            await one(
+              `select count(*)::int as n from campus.project_grade where student_id = $1`,
+              [ids.student],
+            )
+          ).n,
+          0,
+          "a clear takes the whole history",
+        );
+        assert.equal((await mine(ids.student)).grade, null);
+
+        await assert.rejects(
+          save([
+            {
+              studentId: ids.orphanStudent,
+              clear: false,
+              value: "8",
+              visible: false,
+            },
+          ]),
+          { code: "not_enrolled" },
+        );
+
+        // Gabi gets a grade, then leaves: still listed, flagged, still writable.
+        await save([
+          { studentId: gabi, clear: false, value: "7", visible: false },
+        ]);
+        await root.query(
+          `delete from student_offering where student_id = $1 and offering_id = $2`,
+          [gabi, ids.optional],
+        );
+        rows = await readProjectGrades(db, ids.optional, home.homeId);
+        const left = rows.find((row) => row.studentId === gabi);
+        assert.deepEqual(
+          [left.enrolled, left.course, left.grade],
+          [false, null, { value: "7", visible: false }],
+        );
+        await save([
+          { studentId: gabi, clear: false, value: "6", visible: false },
+        ]);
 
         assert.equal(await deactivate(db, ids.optional), true);
       },

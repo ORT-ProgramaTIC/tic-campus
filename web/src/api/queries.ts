@@ -10,10 +10,13 @@ import { api, rememberCsrf } from "./client.ts";
 import type {
   Me,
   MyOffering,
+  MyProjectGrade,
   OfferingSummary,
   PresentationState,
   PresentationsPayload,
   PreviewPayload,
+  ProjectGradeEntry,
+  ProjectGradesPayload,
   ResolvedOffering,
   ScheduleBody,
 } from "./types.ts";
@@ -82,6 +85,28 @@ export const presentationsQuery = (offeringId: number) =>
         `/api/homes/${offeringId}/presentations`,
       ),
     refetchInterval: 60_000,
+  });
+
+/** The staff Notas table (F47). */
+export const projectGradesQuery = (offeringId: number) =>
+  queryOptions({
+    queryKey: ["project-grades", offeringId],
+    queryFn: () =>
+      api<ProjectGradesPayload>(
+        "GET",
+        `/api/homes/${offeringId}/project-grades`,
+      ),
+  });
+
+/** The student's own grade, `null` unless visible (F50). */
+export const myProjectGradeQuery = (offeringId: number) =>
+  queryOptions({
+    queryKey: ["project-grades", offeringId, "mine"],
+    queryFn: () =>
+      api<MyProjectGrade>(
+        "GET",
+        `/api/homes/${offeringId}/project-grades/mine`,
+      ),
   });
 
 export const useMe = () => useQuery(meQuery);
@@ -169,6 +194,47 @@ export function useSetState(offeringId: number) {
         client.invalidateQueries({ queryKey: key }),
         client.invalidateQueries({ queryKey: ["preview", offeringId] }),
       ]),
+  });
+}
+
+/**
+ * Grades and visibility, a cell or a bulk flip alike (F47): applied to the
+ * cache first and rolled back if the api refuses, the way `useSetState` does.
+ */
+export function useSaveProjectGrades(offeringId: number) {
+  const client = useQueryClient();
+  const key = ["project-grades", offeringId];
+  return useMutation({
+    mutationFn: (entries: ProjectGradeEntry[]) =>
+      api<{ saved: true }>("PUT", `/api/homes/${offeringId}/project-grades`, {
+        entries,
+      }),
+    onMutate: async (entries) => {
+      await client.cancelQueries({ queryKey: key, exact: true });
+      const before = client.getQueryData<ProjectGradesPayload>(key);
+      if (before) {
+        const next = new Map(entries.map((entry) => [entry.studentId, entry]));
+        client.setQueryData<ProjectGradesPayload>(key, {
+          ...before,
+          rows: before.rows.map((row) => {
+            const entry = next.get(row.studentId);
+            if (!entry) return row;
+            return {
+              ...row,
+              grade:
+                entry.value === null
+                  ? null
+                  : { value: entry.value, visible: entry.visible },
+            };
+          }),
+        });
+      }
+      return { before };
+    },
+    onError: (_error, _entries, context) => {
+      if (context?.before) client.setQueryData(key, context.before);
+    },
+    onSettled: () => client.invalidateQueries({ queryKey: key }),
   });
 }
 
