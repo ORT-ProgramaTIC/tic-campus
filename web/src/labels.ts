@@ -1,4 +1,14 @@
-import type { Member, PresentationState, Team } from "./api/types.ts";
+import type {
+  Member,
+  OfferingSummary,
+  PresentationState,
+  Team,
+} from "./api/types.ts";
+
+/** An offering's own name, else its courses' last two characters: "4A/4C". */
+export const rotationName = (offering: OfferingSummary) =>
+  offering.offeringName ??
+  offering.courseNames.map((name) => name.slice(-2)).join("/");
 
 /** What each state is called on screen — the 2025 sheet's words. */
 export const STATE_LABEL: Record<PresentationState, string> = {

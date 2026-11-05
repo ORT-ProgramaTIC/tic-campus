@@ -8,7 +8,8 @@ import {
   useRouteLoaderData,
 } from "react-router";
 import { useLogout, useMe } from "./api/queries.ts";
-import type { OfferingSummary, ResolvedOffering } from "./api/types.ts";
+import type { ResolvedOffering } from "./api/types.ts";
+import { rotationName } from "./labels.ts";
 import { useProyectoOfferings } from "./router.tsx";
 
 /**
@@ -61,8 +62,9 @@ export function Shell() {
   );
 }
 
-const rotationName = (offering: OfferingSummary) =>
-  offering.offeringName ?? offering.courseNames.join(" + ");
+/** Each local tab's last rotation in this browser tab, keyed by the path
+ *  after the offering's, so switching rotation on one tab leaves the others. */
+const lastRotation = new Map<string, string>();
 
 /** Every Proyecto offering this year, one per rotation. Hidden for one. */
 function Rotations({ current }: { current: ResolvedOffering | undefined }) {
@@ -158,6 +160,12 @@ function Profile() {
 }
 
 function LocalNav({ offering }: { offering: ResolvedOffering }) {
+  const location = useLocation();
+  lastRotation.set(
+    location.pathname.slice(offering.path.length),
+    offering.path,
+  );
+  const to = (rest: string) => (lastRotation.get(rest) ?? offering.path) + rest;
   const tab = ({ isActive }: { isActive: boolean }) =>
     `-mb-px border-b-2 px-1 py-3 text-sm font-medium ${
       isActive
@@ -166,13 +174,10 @@ function LocalNav({ offering }: { offering: ResolvedOffering }) {
     }`;
   return (
     <nav className="mx-auto flex max-w-6xl gap-6 px-4 sm:px-6">
-      <NavLink to={`${offering.path}/presentaciones`} end className={tab}>
+      <NavLink to={to("/presentaciones")} end className={tab}>
         Presentaciones
       </NavLink>
-      <NavLink
-        to={`${offering.path}/presentaciones/cronograma`}
-        className={tab}
-      >
+      <NavLink to={to("/presentaciones/cronograma")} className={tab}>
         Cronograma
       </NavLink>
     </nav>

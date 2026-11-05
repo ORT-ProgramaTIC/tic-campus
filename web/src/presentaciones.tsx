@@ -16,7 +16,7 @@ import type {
   PresentationsPayload,
   PresentationState,
 } from "./api/types.ts";
-import { blockLabel, formatDay, roundLabel } from "./labels.ts";
+import { blockLabel, formatDay, rotationName, roundLabel } from "./labels.ts";
 import { useOffering } from "./router.tsx";
 import { Timetable } from "./timetable.tsx";
 import { StateChip } from "./ui.tsx";
@@ -31,8 +31,7 @@ export function Presentaciones() {
     <div className="flex flex-col gap-6">
       <div>
         <p className="text-sm text-ink-muted">
-          {offering.subjectName} · {offering.courseNames.join(" + ")} ·{" "}
-          {offering.year}
+          {offering.subjectName} · {rotationName(offering)} · {offering.year}
         </p>
         <h1 className="mt-1 text-2xl font-semibold sm:text-3xl">
           Hola, {me.given_name ?? me.name ?? ""}

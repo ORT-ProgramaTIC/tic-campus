@@ -54,6 +54,7 @@ import {
   blockLabel,
   formatDay,
   fullName,
+  rotationName,
   roundLabel,
   STATE_LABEL,
   STATE_TONE,
@@ -258,8 +259,7 @@ function Editor({
       <div className="flex flex-wrap items-end gap-4">
         <div className="mr-auto">
           <p className="text-sm text-ink-muted">
-            {offering.subjectName} · {offering.courseNames.join(" + ")} ·{" "}
-            {offering.year}
+            {offering.subjectName} · {rotationName(offering)} · {offering.year}
           </p>
           <h1 className="mt-1 text-2xl font-semibold sm:text-3xl">
             Cronograma
