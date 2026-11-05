@@ -144,7 +144,18 @@ export function Notas() {
         // hairlines, the key column dark and the rest muted — under a black
         // header band, the kit's dark panels, rather than its tinted one.
         <div className="overflow-hidden rounded-2xl border border-line bg-card">
-          <div className="overflow-x-auto">
+          {/* `data-scrolled` drives the frozen column's shadow, set straight
+              on the element so scrolling never re-renders the table. The
+              shadow is an `::after` strip: Chrome drops `box-shadow` on cells
+              of a border-collapsed table. */}
+          <div
+            className="group/scroll overflow-x-auto"
+            onScroll={(event) => {
+              event.currentTarget.dataset.scrolled = String(
+                event.currentTarget.scrollLeft > 0,
+              );
+            }}
+          >
             <table className="w-full text-left text-sm whitespace-nowrap">
               <thead>
                 <tr className="bg-onyx text-xs text-white/75">
@@ -163,10 +174,10 @@ export function Notas() {
                   <Header sort={sort} setSort={setSort} column="track">
                     Rol
                   </Header>
-                  <th scope="col" className="px-5 py-3 font-normal">
+                  <th scope="col" className="px-3 py-2.5 font-normal">
                     Nota
                   </th>
-                  <th scope="col" className="px-5 py-3 font-normal">
+                  <th scope="col" className="px-3 py-2.5 font-normal">
                     Visible
                   </th>
                 </tr>
@@ -196,7 +207,7 @@ export function Notas() {
               </tbody>
             </table>
           </div>
-          <p className="border-t border-line px-5 py-3 text-xs text-ink-muted">
+          <p className="border-t border-line px-3 py-2.5 text-xs text-ink-muted">
             {shown.length === query.data.rows.length
               ? count(shown.length, "estudiante", "estudiantes")
               : `${shown.length} de ${count(query.data.rows.length, "estudiante", "estudiantes")}`}{" "}
@@ -223,7 +234,7 @@ function BulkButton(props: {
     <button
       type="button"
       {...props}
-      className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-card px-3 py-2 text-sm font-medium hover:bg-lilac-50 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-card"
+      className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-card px-3 py-1.5 text-sm font-medium hover:bg-lilac-50 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-card"
     />
   );
 }
@@ -249,7 +260,7 @@ function Header({
       aria-sort={
         active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"
       }
-      className={`px-5 py-3 font-normal ${sticky ? "sticky left-0 bg-onyx" : ""}`}
+      className={`px-3 py-2.5 font-normal ${sticky ? `sticky left-0 z-10 bg-onyx after:pointer-events-none after:absolute after:inset-y-0 after:-right-3 after:w-3 after:bg-linear-to-r after:from-black/20 after:to-transparent after:opacity-0 after:transition-opacity group-data-[scrolled=true]/scroll:after:opacity-100` : ""}`}
     >
       <button
         type="button"
@@ -289,8 +300,8 @@ function Row({
   const who = [row.name, row.surname].filter(Boolean).join(" ") || "—";
   const grade = row.grade;
   return (
-    <tr className="group border-b border-line last:border-0 hover:bg-lilac-50">
-      <td className="sticky left-0 bg-card px-5 py-4 font-semibold group-hover:bg-lilac-50">
+    <tr className="border-b border-line last:border-0">
+      <td className="sticky left-0 z-10 bg-card px-3 py-1.5 font-semibold after:pointer-events-none after:absolute after:inset-y-0 after:-right-3 after:w-3 after:bg-linear-to-r after:from-black/20 after:to-transparent after:opacity-0 after:transition-opacity group-data-[scrolled=true]/scroll:after:opacity-100">
         {row.surname ?? "—"}
         {!row.enrolled && (
           <span className="ml-2 text-xs font-normal text-ink-faint">
@@ -298,14 +309,14 @@ function Row({
           </span>
         )}
       </td>
-      <td className="px-5 py-4">{row.name ?? "—"}</td>
-      <td className="px-5 py-4 text-ink-muted tabular-nums">
+      <td className="px-3 py-1.5">{row.name ?? "—"}</td>
+      <td className="px-3 py-1.5 text-ink-muted tabular-nums">
         {shortCourse(row.course)}
       </td>
-      <td className="px-5 py-4">
+      <td className="px-3 py-1.5">
         {row.projects.map((project) => project.name).join(", ")}
       </td>
-      <td className="px-5 py-4">
+      <td className="px-3 py-1.5">
         <div className="flex flex-wrap gap-1">
           {row.projects.map((project) => (
             <span
@@ -317,11 +328,11 @@ function Row({
           ))}
         </div>
       </td>
-      <td className="px-5 py-4">
+      <td className="px-3 py-1.5">
         {locked ? (
           grade ? (
             <span
-              className={`inline-block rounded-md px-2 py-1 text-xs font-semibold ${GRADE_TONE[grade.value]}`}
+              className={`inline-block rounded-md px-2 py-0.5 text-xs font-semibold ${GRADE_TONE[grade.value]}`}
             >
               {gradeLabel(grade.value)}
             </span>
@@ -330,7 +341,7 @@ function Row({
           )
         ) : (
           <label
-            className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold focus-within:outline-2 focus-within:outline-lilac-500 ${
+            className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-semibold focus-within:outline-2 focus-within:outline-lilac-500 ${
               grade
                 ? GRADE_TONE[grade.value]
                 : "bg-card text-ink-muted ring-1 ring-line ring-inset"
@@ -367,7 +378,7 @@ function Row({
           </label>
         )}
       </td>
-      <td className="px-5 py-4">
+      <td className="px-3 py-1.5">
         <button
           type="button"
           disabled={!grade || locked || busy}
@@ -388,7 +399,7 @@ function Row({
               visible: !grade.visible,
             })
           }
-          className={`grid size-8 place-items-center rounded-full hover:bg-lilac-100 disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent ${
+          className={`grid size-7 place-items-center rounded-full hover:bg-lilac-100 disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent ${
             grade?.visible ? "text-lilac-700" : "text-ink-faint"
           }`}
         >
