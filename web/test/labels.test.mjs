@@ -14,7 +14,10 @@ test("a team reads as its surnames; a shared one gets the initial", () => {
 });
 
 test("no members, no surname, no team", () => {
-  assert.equal(surnames({ projectId: 1, name: "EcoRiego", members: [] }), "EcoRiego");
+  assert.equal(
+    surnames({ projectId: 1, name: "EcoRiego", members: [] }),
+    "EcoRiego",
+  );
   assert.equal(
     surnames({ projectId: 1, name: "X", members: [m("Ana", null)] }),
     "Ana",
