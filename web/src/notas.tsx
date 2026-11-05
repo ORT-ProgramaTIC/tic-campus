@@ -234,7 +234,7 @@ function BulkButton(props: {
     <button
       type="button"
       {...props}
-      className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-card px-3 py-1.5 text-sm font-medium hover:bg-lilac-50 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-card"
+      className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-card px-3 py-2 text-sm font-medium hover:bg-lilac-50 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-card"
     />
   );
 }
@@ -301,7 +301,10 @@ function Row({
   const grade = row.grade;
   return (
     <tr className="border-b border-line last:border-0">
-      <td className="sticky left-0 z-10 bg-card px-3 py-1.5 font-semibold after:pointer-events-none after:absolute after:inset-y-0 after:-right-3 after:w-3 after:bg-linear-to-r after:from-black/20 after:to-transparent after:opacity-0 after:transition-opacity group-data-[scrolled=true]/scroll:after:opacity-100">
+      <td
+        title={row.surname ?? undefined}
+        className="sticky left-0 z-10 max-w-44 truncate bg-card px-3 py-1.5 font-semibold after:pointer-events-none after:absolute after:inset-y-0 after:-right-3 after:w-3 after:bg-linear-to-r after:from-black/20 after:to-transparent after:opacity-0 after:transition-opacity group-data-[scrolled=true]/scroll:after:opacity-100"
+      >
         {row.surname ?? "—"}
         {!row.enrolled && (
           <span className="ml-2 text-xs font-normal text-ink-faint">
@@ -309,15 +312,23 @@ function Row({
           </span>
         )}
       </td>
-      <td className="px-3 py-1.5">{row.name ?? "—"}</td>
+      <td
+        className="max-w-40 truncate px-3 py-1.5"
+        title={row.name ?? undefined}
+      >
+        {row.name ?? "—"}
+      </td>
       <td className="px-3 py-1.5 text-ink-muted tabular-nums">
         {shortCourse(row.course)}
       </td>
-      <td className="px-3 py-1.5">
+      <td
+        className="max-w-48 truncate px-3 py-1.5"
+        title={row.projects.map((project) => project.name).join(", ")}
+      >
         {row.projects.map((project) => project.name).join(", ")}
       </td>
       <td className="px-3 py-1.5">
-        <div className="flex flex-wrap gap-1">
+        <div className="flex max-w-52 flex-wrap gap-1">
           {row.projects.map((project) => (
             <span
               key={project.name}
