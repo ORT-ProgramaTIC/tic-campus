@@ -54,12 +54,12 @@ import {
   blockLabel,
   formatDay,
   fullName,
-  rotationName,
   roundLabel,
   STATE_LABEL,
   STATE_TONE,
   surnames,
 } from "./labels.ts";
+import { Rotations } from "./rotations.tsx";
 import { useOffering } from "./router.tsx";
 import { MemberList, Modal, Section } from "./ui.tsx";
 import { WeekGrid } from "./weekgrid.tsx";
@@ -259,12 +259,13 @@ function Editor({
       <div className="flex flex-wrap items-end gap-4">
         <div className="mr-auto">
           <p className="text-sm text-ink-muted">
-            {offering.subjectName} · {rotationName(offering)} · {offering.year}
+            {offering.subjectName} · {offering.year}
           </p>
           <h1 className="mt-1 text-2xl font-semibold sm:text-3xl">
             Cronograma
           </h1>
         </div>
+        <Rotations />
       </div>
 
       {stale ? (

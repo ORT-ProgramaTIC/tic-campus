@@ -1,22 +1,19 @@
-import { ChevronDown, LogOut } from "lucide-react";
+import { LogOut } from "lucide-react";
 import {
   Link,
   NavLink,
   Outlet,
   useLocation,
-  useNavigate,
   useRouteLoaderData,
 } from "react-router";
 import { useLogout, useMe } from "./api/queries.ts";
 import type { ResolvedOffering } from "./api/types.ts";
-import { rotationName } from "./labels.ts";
-import { useProyectoOfferings } from "./router.tsx";
 
 /**
  * The thin header (`project-tic-campus-navigation-shell`): only Proyecto is
  * live this year, so it is the one item and always the current one. Staff of
  * the offering get the local nav under it — the student page and the
- * Cronograma.
+ * Cronograma. Each course tab draws its own rotation select (`Rotations`).
  */
 export function Shell() {
   // Undefined outside an offering's routes (`/proyecto` with none).
@@ -49,7 +46,6 @@ export function Shell() {
             </Link>
           </nav>
           <div className="ml-auto flex items-center gap-2">
-            <Rotations current={offering} />
             <Profile />
           </div>
         </div>
@@ -65,47 +61,6 @@ export function Shell() {
 /** Each local tab's last rotation in this browser tab, keyed by the path
  *  after the offering's, so switching rotation on one tab leaves the others. */
 const lastRotation = new Map<string, string>();
-
-/** Every Proyecto offering this year, one per rotation. Hidden for one. */
-function Rotations({ current }: { current: ResolvedOffering | undefined }) {
-  const offerings = useProyectoOfferings();
-  const navigate = useNavigate();
-  const location = useLocation();
-  if (offerings.length < 2) return null;
-
-  return (
-    <label className="relative">
-      <span className="sr-only">Rotación</span>
-      <select
-        value={current?.offeringId ?? ""}
-        onChange={(event) => {
-          const next = offerings.find(
-            (one) => one.offeringId === Number(event.target.value),
-          );
-          if (!next) return;
-          // Same tab in the other rotation; the Cronograma's loader sends
-          // non-staff back to the student page.
-          const tab = current
-            ? location.pathname.slice(current.path.length)
-            : "/presentaciones";
-          navigate(next.path + tab);
-        }}
-        className="appearance-none rounded-xl border border-line bg-card py-2 pr-8 pl-3 text-sm font-medium"
-      >
-        {current === undefined && <option value="">Rotación</option>}
-        {offerings.map((one) => (
-          <option key={one.offeringId} value={one.offeringId}>
-            {rotationName(one)}
-          </option>
-        ))}
-      </select>
-      <ChevronDown
-        className="pointer-events-none absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-ink-muted"
-        aria-hidden
-      />
-    </label>
-  );
-}
 
 /** The avatar and its menu — a native popover, so it closes on an outside
  *  click or Escape by itself. Pinned under the header's right edge, where the

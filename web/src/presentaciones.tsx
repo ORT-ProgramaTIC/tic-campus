@@ -16,7 +16,8 @@ import type {
   PresentationsPayload,
   PresentationState,
 } from "./api/types.ts";
-import { blockLabel, formatDay, rotationName, roundLabel } from "./labels.ts";
+import { blockLabel, formatDay, roundLabel } from "./labels.ts";
+import { Rotations } from "./rotations.tsx";
 import { useOffering } from "./router.tsx";
 import { Timetable } from "./timetable.tsx";
 import { StateChip } from "./ui.tsx";
@@ -29,13 +30,16 @@ export function Presentaciones() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <p className="text-sm text-ink-muted">
-          {offering.subjectName} · {rotationName(offering)} · {offering.year}
-        </p>
-        <h1 className="mt-1 text-2xl font-semibold sm:text-3xl">
-          Hola, {me.given_name ?? me.name ?? ""}
-        </h1>
+      <div className="flex flex-wrap items-end gap-4">
+        <div className="mr-auto">
+          <p className="text-sm text-ink-muted">
+            {offering.subjectName} · {offering.year}
+          </p>
+          <h1 className="mt-1 text-2xl font-semibold sm:text-3xl">
+            Hola, {me.given_name ?? me.name ?? ""}
+          </h1>
+        </div>
+        <Rotations />
       </div>
       {query.isPending ? (
         <div className="h-52 animate-pulse rounded-3xl bg-card" />
