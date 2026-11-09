@@ -29,72 +29,79 @@ re-argued per item):
 
 ## How this file works
 
-It holds an **index of every item** plus the full text of the ones still open. Closed items
-live verbatim in milestone files, `docs/features/M<n>-*.md`, and the index row says which
-one. A citation like `FEATURES.md F22` resolves through the index.
+This file follows the family's record rules, `../../tic-platform/RECORD-CONVENTIONS.md`
+(adopted 2026-11-08), whose reference implementation is `tic-host`. In short:
 
-An item is **closed** when its box is checked, whatever its status word says: `decided`,
-`built` or `dropped` with a checked box is settled, and a later slice that revisits it adds a
-new item rather than reopening the old one. To close an item: check the box, move it
-verbatim to the current milestone file (`docs/features/M1-the-rebuild.md` until a new one is
-opened), and point its index row there.
+- An **index of every item**, then the full text of the open ones. Closed items move verbatim
+  to `docs/features/M<n>-*.md`, and the index row says which. A citation like
+  `FEATURES.md F22` resolves through the index. IDs are never reused.
+- **Status** is one of `open`, `decided`, `building` (text below), `built`, `done`, `dropped`,
+  `deprecated` (text archived). `built` means verified locally while a `DEPLOY-DAY.md` entry
+  is still open. **Notes** carries the rest: deferrals, what a closed item left unbuilt, and
+  the entries it waits on (`waits on D1`). **The index wins** over an archived Status line,
+  which records what the item was when it moved.
+- A `decided` or `building` item leads with `- **Decision, in short:**`. A later slice that
+  revisits a closed item is a new item whose title says `amends F<n>`, never a reopening.
+- Anything only the box can show (tic-auth, the directory's real data, the doctor, backups)
+  gets a `DEPLOY-DAY.md` entry, and the item is `built` until it closes.
+- `bin/check-docs.py` checks all of this, and runs in `pnpm test`.
 
 ## Index
 
 Every item, in order.
 
-| Item                                                        | Status   | Where                                                           |
-| ----------------------------------------------------------- | -------- | --------------------------------------------------------------- |
-| F1 · What tic-campus is for                                 | decided  | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F2 · Explicit non-goals                                     | decided  | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F3 · Login, through tic-auth                                | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F4 · Anonymous read                                         | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F5 · Roles and permissions, derived from the directory      | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F6 · "Mis materias"                                         | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F7 · Articles are Markdown, stored in the database          | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F8 · Subject library, used by offerings                     | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F9 · Uploads                                                | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F10 · Embeds                                                | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F11 · Drafts and revision history                           | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F12 · Several teachers editing                              | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F13 · Units                                                 | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F14 · One configured home per offering                      | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F15 · Program                                               | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F16 · Calendar                                              | deferred | below                                                           |
-| F17 · No special page types                                 | decided  | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F18 · An activity is an article                             | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F19 · Value types                                           | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F20 · The mark formula                                      | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F21 · Terms and the final                                   | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F22 · Official term grade                                   | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F23 · Redos                                                 | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F24 · Publishing and what students see                      | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F25 · Due dates and grading                                 | decided  | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F26 · Grid editor                                           | decided  | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F27 · CSV / XLSX import and export                          | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F28 · Results API                                           | deferred | below                                                           |
-| F29 · Revision requests                                     | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F30 · In-app notifications                                  | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F31 · tic-platform compliance                               | building | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F32 · Public URLs                                           | decided  | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F33 · Mobile-first student views                            | decided  | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F34 · An admin activates offerings                          | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F35 · Past years: public and read-only                      | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F36 · Keys and conventions                                  | decided  | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F37 · The tables                                            | decided  | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F38 · A result is a record of what a student did            | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F39 · Groups, terms and scales are rows                     | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F40 · Formulas are text, validated on save                  | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F41 · Campus keeps its own audit log                        | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F42 · Admin-level values live in code, not a settings table | built    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F43 · A brand redesign, not today's identity                | open     | below                                                           |
-| F44 · The interface is built by hand                        | decided  | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F45 · Presentation schedule                                 | building | below                                                           |
-| F46 · The Proyecto grade table                              | building | below                                                           |
-| F47 · Notas: the staff tab                                  | building | below                                                           |
-| F48 · Notas: search                                         | building | below                                                           |
-| F49 · Track colours                                         | building | below                                                           |
-| F50 · Nota: the student tab                                 | building | below                                                           |
+| Item                                                        | Status   | Notes                                                       | Where                                                           |
+| ----------------------------------------------------------- | -------- | ----------------------------------------------------------- | --------------------------------------------------------------- |
+| F1 · What tic-campus is for                                 | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F2 · Explicit non-goals                                     | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F3 · Login, through tic-auth                                | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F4 · Anonymous read                                         | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F5 · Roles and permissions, derived from the directory      | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F6 · "Mis materias"                                         | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F7 · Articles are Markdown, stored in the database          | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F8 · Subject library, used by offerings                     | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F9 · Uploads                                                | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F10 · Embeds                                                | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F11 · Drafts and revision history                           | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F12 · Several teachers editing                              | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F13 · Units                                                 | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F14 · One configured home per offering                      | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F15 · Program                                               | done     | per-offering reorder and hide not built                     | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F16 · Calendar                                              | decided  | deferred until after launch                                 | below                                                           |
+| F17 · No special page types                                 | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F18 · An activity is an article                             | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F19 · Value types                                           | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F20 · The mark formula                                      | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F21 · Terms and the final                                   | done     | term dates arrive with F16                                  | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F22 · Official term grade                                   | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F23 · Redos                                                 | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F24 · Publishing and what students see                      | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F25 · Due dates and grading                                 | decided  | deferred with F16                                           | below                                                           |
+| F26 · Grid editor                                           | building | API built (slice 7); the grid screen is for the 2027 launch | below                                                           |
+| F27 · CSV / XLSX import and export                          | done     | CSV only, no XLSX                                           | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F28 · Results API                                           | decided  | deferred until after launch                                 | below                                                           |
+| F29 · Revision requests                                     | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F30 · In-app notifications                                  | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F31 · tic-platform compliance                               | built    | waits on D1                                                 | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F32 · Public URLs                                           | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F33 · Mobile-first student views                            | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F34 · An admin activates offerings                          | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F35 · Past years: public and read-only                      | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F36 · Keys and conventions                                  | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F37 · The tables                                            | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F38 · A result is a record of what a student did            | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F39 · Groups, terms and scales are rows                     | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F40 · Formulas are text, validated on save                  | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F41 · Campus keeps its own audit log                        | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F42 · Admin-level values live in code, not a settings table | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F43 · A brand redesign, not today's identity                | open     |                                                             | below                                                           |
+| F44 · The interface is built by hand                        | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F45 · Presentation schedule                                 | done     | in use for 2026 Proyecto                                    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F46 · The Proyecto grade table                              | building |                                                             | below                                                           |
+| F47 · Notas: the staff tab                                  | building |                                                             | below                                                           |
+| F48 · Notas: search                                         | building |                                                             | below                                                           |
+| F49 · Track colours                                         | building |                                                             | below                                                           |
+| F50 · Nota: the student tab                                 | building |                                                             | below                                                           |
 
 ---
 
@@ -103,7 +110,8 @@ Every item, in order.
 ```markdown
 ### F<n> · <title>
 
-- [ ] **Status:** open | decided | deferred | building | done | dropped
+- [ ] **Status:** <status> (<date>)
+- **Decision, in short:** at most ten lines, once anything is decided
 - **Prior art:** ... (only where a sibling or the old campus already answered this)
 - **To settle:** the actual open question(s)
 - **Decision:** _(filled in when made, with the reasoning — not just the answer)_
@@ -119,6 +127,9 @@ directly. See F15 for why there is no per-offering copy of the units yet.
 ### F16 · Calendar
 
 - [ ] **Status:** deferred until after launch
+- **Decision, in short:** A campus-wide calendar of activity due dates (F18) and teacher-added events;
+  school-wide events come from a directory view proposed to tic-auth. Deferred until after
+  launch, when it becomes the only reader of `due_at` (F25).
 - **Decision:** Upcoming activity due dates (from F18) plus teacher-added events (exams,
   field trips).
   **School-wide events (holidays, school events) belong to the directory**, not campus.
@@ -134,11 +145,45 @@ directly. See F15 for why there is no per-offering copy of the units yet.
   arrive with it. Still to settle then: the read shape (campus-wide, per offering, or both),
   the teacher-event table (not in F37), and Buenos Aires time for all-day events.
 
+## Group E — Activities and grading
+
+### F25 · Due dates and grading
+
+- [x] **Status:** decided
+- **Decision, in short:** Due dates are display only: the calendar and "vence en N días". No 48 h
+  notification and no late flag, since campus has no submissions. `due_at` exists since slice 7;
+  nothing reads it until F16.
+- **Decision:** **Display only**: calendar and "vence en N días". ~~and the 48 h
+  notification (F30).~~ **The 48 h notification was dropped from F30 (slice 15).** Without
+  submissions (F2), campus has no way of knowing when something was turned in, so a late
+  flag would be a guess entered by hand.
+
+  **`due_at` exists since slice 7** (F18), on the offering's use of the article.
+  Nothing reads it yet; F16's calendar is what it is for.
+
 ## Group F — Gradebook (staff)
+
+### F26 · Grid editor
+
+- [x] **Status:** decided
+- **Decision, in short:** A spreadsheet-like grid of students × activities per offering: keyboard
+  navigation, paste from the clipboard, a bulk "mark all done". Teachers of the offering and
+  admins only. The API (one read, one save) is built; the screen is still to build.
+- **Decision:** A spreadsheet-like grid of students × activities per offering, with keyboard
+  navigation, paste from the clipboard and a bulk "mark all done". It replaces the Sheets
+  UX that teachers are used to. Only teachers of the offering and admins can open it (F5).
+
+  **The api half is built (slice 7)**: `GET /api/homes/:oferta/gradebook` is the
+  whole grid in one read — groups, terms, scales, the presets, the activities,
+  the roster and the marks — and `PUT …/results` saves every touched cell in one
+  call. The screen is a person's (F44); what this slice owes it is a shape.
 
 ### F28 · Results API
 
 - [ ] **Status:** deferred until after launch
+- **Decision, in short:** A results API for scripts, not built for launch: no caller yet. When it is, a
+  tic-auth client acts for a named teacher (`manageOffering`), with `campus:results:write` and
+  `campus:grades:write` scopes, through the single writers and F35's lock, and cannot publish.
 - **Decision:** A public API for results, for scripts and future integrations, is wanted but
   **not built for launch**. No sibling pushes today: neither MEV nor tic-host has a caller
   waiting. When it is built, the defaults are: tic-auth client credentials with a scope such
@@ -181,89 +226,6 @@ directly. See F15 for why there is no per-offering copy of the units yet.
   - The favicon, the logo and the name treatment are part of this, not a follow-up.
 - **Decision:** _(not made)_
 
-## Group L — Presentations
-
-### F45 · Presentation schedule
-
-- [ ] **Status:** building
-- **Prior art:** `campus-proyecto` (2025, separate Astro repo, abandoned after 2025-11-25):
-  `orden-presentacion` read two Google Sheets — `Presentacion` (an ordered list of groups,
-  each with `Instancia`, `Rotación` and `Estado`) and `Fechas` (date, block, round, rotation
-  and `N Grupos`, how many fit) — and recomputed every team's estimated date and block in the
-  browser on each load. Identity was a Fuse.js name match against an `Estudiante` sheet.
-- **Decision:** An offering can publish the order in which its teams present, and each team
-  sees when it is expected to. **It ships alone, for the 2026 Proyecto presentations**, ahead
-  of the 2027 launch — the one exception to the Launch row above.
-  - **Teams are tic-registry projects.** There is no team entity: a project _is_ its team
-    (tic-registry `docs/SCHEMA.md`). Campus reads `directory.project` and
-    `directory.project_member` and stores no membership, the way it stores no roster (F5).
-    An offering's teams are the projects with a member whose `offering_id` is that offering,
-    because `project_offering` is not published — so a project nobody has joined is not
-    schedulable, and that is a tic-registry row to add.
-  - **Every reader sees every team's members** — name, surname and track, never email or
-    DNI. The page is signed-in only, and the timetable's popup is "who presents in this slot"
-    (decided 2026-10-18).
-  - **Rotation is the offering.** 2025's `Rotación` column (AB/CD) existed because one sheet
-    served two groups of courses. In the directory each rotation is already its own offering
-    (2026: 51 is NR4A + NR4C, 52 is NR4B + NR4D), so each home has its own schedule and
-    there is nothing to filter.
-  - **Generic, not a Proyecto page** (F17). Any offering may use it; a home shows it only
-    when its teacher adds the `presentations` section, which is not in the default list.
-  - **Only the offering's own blocks.** A presentation block is a date plus a block number,
-    and both must match one of the offering's weekly modules in
-    `directory.offering_time_slot` — a block the class does not meet in is a `400`.
-  - **A block holds its own slots.** Three by default, 20 minutes each, back to back from
-    F42's `BELL` start: an 80-minute block keeps its last 20 as margin for the ones that run
-    over. More than fit at 20 share the block evenly. The teacher may change the count and
-    override any slot's start; the slots after an override follow it, so moving one moves
-    the rest. A slot is cut short by the next one or the bell. Stored as a count and an
-    array of overrides with `null` for "where the defaults put it", so changing the count
-    re-splits instead of leaving stale times behind.
-  - **A team may be pinned** to a block and slot. Two teams cannot share one, and Postgres
-    says so (a partial unique index), not a check two tabs would both pass.
-  - **The estimate is derived on every read and never stored**, exactly as marks are (F20).
-    Per round: pinned teams that have not presented hold their slot while it is live; every
-    other pending or presenting team, in queue order, takes the next live free slot. A slot
-    is live until it ends, so a team presenting right now keeps the slot it is in. **A pin
-    whose slot passed with the team still pending falls back into the queue** at its
-    position, flagged `pinMissed` — nothing waits on the teacher to notice. Finished teams
-    have no estimate, as in 2025.
-  - **States** are `pending`, `presenting`, `presented`, `passed`, `failed` and `absent` —
-    2025's Pendiente, Presentando, Presentado, Aprobado, Desaprobado and No Presentan. Text
-    checked in the api, no enum (F18).
-  - **Signed-in only.** Any signed-in user reads a current-year schedule — the header's switcher
-    lists every activated Proyecto offering, so a student can see the other rotation's (decided
-    2026-10-22). A past year's is its staff's and enrolled students' only, anyone else gets a
-    `403`. Unlike F4's articles this is not public: it is a list of who presents when.
-  - **One write for the schedule, one for state.** The teacher saves blocks, slots, order and
-    pins in one `PUT`, which **deletes by omission** — the opposite of F15's rule, and safe
-    here because nothing points at these rows except the pins the same body rewrites. Two
-    teachers are F12's problem and get F12's answer: the `PUT` carries the `savedAt` it
-    loaded, and a stale one is `409 stale_schedule`. State is a separate `PATCH` that does
-    not move `savedAt`, so flipping a team to "presentando" during a presentation never
-    stales an open dashboard — which is also why the `PUT` never writes state.
-  - **The dashboard previews before it saves.** `POST …/presentations/preview` takes the
-    `PUT`'s body and answers where every team would land, saving nothing — the gradebook's
-    `…/preview` again, cheap because the estimate is a pure function. It refuses what the
-    save would refuse, so a body that previews is a body that saves, bar the stale check.
-  - **A slot can be struck on a date**, for an event that takes it. It keeps its number and
-    time — the slots after it do not renumber, so a pin on slot 3 still means slot 3 — and is
-    given to nobody, queue or pin. Changing a block's slot count is the one way the struck list
-    goes stale, and the save refuses a number past the count rather than trimming it; clearing
-    it on a count change is the editor's job, as it already is for the time overrides.
-  - **Each round can start the queue at a slot the teacher picks** ("from here on"). The queue
-    skips every slot before it, even ones still ahead; pins do not, so a team can be pinned
-    before the start. A team whose pin was missed rejoins after the start like anyone else.
-    Stored on `offering_home` as ids with no foreign key, `unit_order`'s argument: one `PUT`
-    writes the blocks and the starts together, and a start naming a block that is gone reads
-    as "from now".
-  - **Special dates are pins inside class blocks**, not a block kind of their own, and the
-    queue may fill a special block's spare slots. Decided 2026-10-18, when both alternatives
-    were offered and declined.
-  - **No year lock.** F35 locks marks; this is not one.
-  - **Deferred:** a bell item when a team's estimate moves (F30), a cross-offering view, and
-    member lists.
-
 ## Group M — Proyecto grades
 
 The marks a Proyecto teacher gives at the end of a rotation: one per student, typed rather
@@ -274,6 +236,9 @@ after F45. Two tabs: **Notas** for staff (F47) and **Nota** for students (F50).
 ### F46 · The Proyecto grade table
 
 - [ ] **Status:** building
+- **Decision, in short:** `campus.project_grade`: one typed grade per student per rotation (10–6, PIA,
+  DICIEMBRE), keyed by student and offering home. Hidden until the teacher flips `visible`, per
+  student. Append-only like `official_grade`; a clear deletes the pair's history.
 - **Prior art:** F22's `official_grade` (a typed grade per student per term) and F18/F19's
   scale activity (a named scale, published per activity). Both are close, and neither fits.
 - **Decision:** **A table of its own, `campus.project_grade`**: related to the gradebook's
@@ -319,6 +284,9 @@ after F45. Two tabs: **Notas** for staff (F47) and **Nota** for students (F50).
 ### F47 · Notas: the staff tab
 
 - [ ] **Status:** building
+- **Decision, in short:** Notas, a staff-only course tab: the offering's roster with course, project and
+  track, where only the grade and its visibility are editable. Sortable, saves each change at
+  once, bulk show/hide over the visible rows, asks before a clear, read-only in a locked year.
 - **Decision:** A course tab, `/:year/:subject/:offering/notas`, beside Presentaciones and
   Cronograma in the local nav. Staff only: the offering's teachers and admins
   (`capabilitiesFor` gives admins `ALL`). Anyone else is redirected to the student page,
@@ -372,6 +340,8 @@ after F45. Two tabs: **Notas** for staff (F47) and **Nota** for students (F50).
 ### F48 · Notas: search
 
 - [ ] **Status:** building
+- **Decision, in short:** Notas gets tic-registry's search: Buscar por Estudiante or Proyecto, with its
+  accent- and order-insensitive matcher ported with its tests, filtered in the browser.
 - **Prior art:** tic-registry's Proyectos screen: a "Buscar por" select (Nombre proyecto /
   Nombre integrante) beside a text input, and `fold` plus a word-wise matcher in
   `web/src/lib/text.ts`.
@@ -385,6 +355,8 @@ after F45. Two tabs: **Notas** for staff (F47) and **Nota** for students (F50).
 ### F49 · Track colours
 
 - [ ] **Status:** building
+- **Decision, in short:** tic-registry's track colours and tag tokens, ported as is, so a Rol chip matches
+  the discipline's colour on tic-registry's timetable.
 - **Prior art:** tic-registry's `subjectColor` (`web/src/lib/timetableColors.ts`), keyed by
   track label because track labels are the seminar subject names. Its colours are
   measured against AA, and IOT is flipped to ink.
@@ -397,6 +369,9 @@ after F45. Two tabs: **Notas** for staff (F47) and **Nota** for students (F50).
 ### F50 · Nota: the student tab
 
 - [ ] **Status:** building
+- **Decision, in short:** Nota, the student's tab: their own grade, large, with their project and Rol chip.
+  Hidden and ungraded both read "Pendiente Devolución". No rotation select, no notification;
+  staff are redirected to Notas.
 - **Decision:** A course tab, `/:year/:subject/:offering/nota`, for students enrolled in
   the offering (`seeOwnMarks`). Decided 2026-11-05.
 

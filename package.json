@@ -7,7 +7,7 @@
     "typecheck": "pnpm -r typecheck",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "pnpm -r test"
+    "test": "pnpm -r test && python3 bin/check-docs.py"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
