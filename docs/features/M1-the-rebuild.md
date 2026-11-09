@@ -960,6 +960,8 @@ read_at)`, and not F37's reserved `notification`, since a row here means "read".
 
 ### F32 · Public URLs
 
+> **Amended by F51** · URL segments come from the registry's slugs
+
 - [x] **Status:** decided
 - **Decision:** `/<year>/<subject-slug>/<offering-slug>/<article-slug>`, for example
   `/2027/bases-de-datos/5to-informatica/tp-sql`. Links get shared in WhatsApp groups and on
@@ -1451,3 +1453,173 @@ student_id, recorded_at DESC)`; `saveOfficialGrades` inserts, and it has to,
   - **No year lock.** F35 locks marks; this is not one.
   - **Deferred:** a bell item when a team's estimate moves (F30), a cross-offering view, and
     member lists.
+
+## Group M — Proyecto grades
+
+The marks a Proyecto teacher gives at the end of a rotation: one per student, typed rather
+than computed, shown to the student only when the teacher says so. **It ships for 2026
+Proyecto**, ahead of the 2027 launch, which makes it the Launch row's second exception
+after F45. Two tabs: **Notas** for staff (F47) and **Nota** for students (F50).
+
+### F46 · The Proyecto grade table
+
+- [ ] **Status:** building
+- **Decision, in short:** `campus.project_grade`: one typed grade per student per rotation (10–6, PIA,
+  DICIEMBRE), keyed by student and offering home. Hidden until the teacher flips `visible`, per
+  student. Append-only like `official_grade`; a clear deletes the pair's history.
+- **Prior art:** F22's `official_grade` (a typed grade per student per term) and F18/F19's
+  scale activity (a named scale, published per activity). Both are close, and neither fits.
+- **Decision:** **A table of its own, `campus.project_grade`**: related to the gradebook's
+  grades, not the same thing (decided 2026-11-05). "Project" here means the subject
+  Proyecto. The row is keyed by student and offering, never by a tic-registry project.
+  A student is graded alone, whichever team they are on.
+
+  - **Why not `official_grade`:** it hangs off a term, and its `value` is `numeric` 1–10
+    checked by `checkMark`. PIA and DICIEMBRE aren't numbers, Proyecto homes have no
+    terms, and loosening either one reaches the formula machinery (F20, F21) that 2027
+    depends on.
+  - **Why not a scale activity:** its visibility is `results_published_at` per
+    **activity**, so it's shown to the whole class or to nobody. This needs visibility
+    **per student**.
+  - **One grade per student per rotation** (decided 2026-11-05). Rotation is the
+    offering (F45), so the row hangs off `offering_home`, like `presentation` does.
+  - **Values:** `10`, `9`, `8`, `7`, `6`, `pia`, `diciembre`. Text checked in the api, no
+    enum (F18's rule). PIA and DICIEMBRE are **labels only** for now: no rule, no date,
+    no formula reads them (decided 2026-11-05). A blank is an absent row (F38).
+  - **`visible` is a boolean, default `false`.** Typing a grade is never publishing it.
+    It's per row because it's per student. This is the draft state F22 declined for
+    term grades, and the reasoning doesn't carry over: a Proyecto grade gets typed during
+    the presentations, while the teacher is still deciding, not when a boletín is due.
+  - **Append-only** (F41), the shape `official_grade` has had since slice 17: a change
+    inserts a row, the current grade is the pair's newest by `recorded_at` then `id`, and
+    flipping `visible` alone is a change too, so the history answers "who showed this,
+    and when". Clearing deletes the pair's whole history, for `result`'s reason.
+
+  ```
+  project_grade
+    id               uuid pk default random
+    offering_home_id uuid not null → offering_home
+    student_id       int  not null → public."user"
+    value            text not null
+    visible          boolean not null default false
+    recorded_by      int  not null → public."user"
+    recorded_at      timestamptz not null default now()
+    index (offering_home_id, student_id, recorded_at desc)
+  ```
+
+  Migration `0017_the_project_grades.sql`.
+
+### F47 · Notas: the staff tab
+
+- [ ] **Status:** building
+- **Decision, in short:** Notas, a staff-only course tab: the offering's roster with course, project and
+  track, where only the grade and its visibility are editable. Sortable, saves each change at
+  once, bulk show/hide over the visible rows, asks before a clear, read-only in a locked year.
+- **Decision:** A course tab, `/:year/:subject/:offering/notas`, beside Presentaciones and
+  Cronograma in the local nav. Staff only: the offering's teachers and admins
+  (`capabilitiesFor` gives admins `ALL`). Anyone else is redirected to the student page,
+  the way Cronograma's loader does. It draws `<Rotations />` beside its title, so each
+  tab keeps its own rotation.
+
+  **The roster** is `roster`'s rule (F38): the offering's enrolled, plus anyone who has
+  left but still holds a `project_grade` here, flagged. **Only the grade and its
+  visibility are editable** (decided 2026-11-05). Campus owns no people (the Roster row
+  above), so who is on the list is tic-registry's business.
+
+  | Column   | Kind              | Source                                                                                 |
+  | -------- | ----------------- | -------------------------------------------------------------------------------------- |
+  | Apellido | fixed, sortable   | `directory.user.surname`                                                               |
+  | Nombre   | fixed, sortable   | `directory.user.name`                                                                  |
+  | Curso    | fixed, sortable   | the enrolment's course, shown as its last two characters (`4A`), `rotationName`'s rule |
+  | Proyecto | fixed, sortable   | `directory.project_member` for this offering → `directory.project.name`                |
+  | Rol      | fixed, sortable   | that member row's `track`, as a chip (F49)                                             |
+  | Nota     | editable (select) | F46                                                                                    |
+  | Visible  | editable (eye)    | F46                                                                                    |
+  - **Sorting:** one active column, ascending then descending on click (`aria-sort`),
+    `localeCompare(…, "es")`. Default is Apellido, Nombre ascending. **Blanks sort last
+    in both directions.**
+  - **No project:** Proyecto and Rol are blank (decided 2026-11-05). A grade may still be
+    owed.
+  - **Two projects in one rotation** (tic-registry allows it): both are listed,
+    comma-separated, each with its own Rol chip. The row sorts by the first, alphabetically
+    (decided 2026-11-05).
+  - **Nota colours:** 10 is green, 6 is yellow, and 9 to 7 step between them. PIA is
+    orange, DICIEMBRE red, blank neutral. They're tokens in `index.css`, and each pair is
+    **measured** against AA (4.5:1) the way tic-registry measured its tags, not
+    eyeballed.
+  - **Visible:** an eye (`Eye` / `EyeOff`). Disabled while there's no grade, since there's
+    nothing to show.
+  - **Bulk:** "Mostrar todas" / "Ocultar todas" (decided 2026-11-05) act on **the rows the
+    search currently shows** that have a grade, and the button says how many ("Mostrar
+    12"). Showing one team's grades is the case for that.
+  - **Saving:** each change saves at once, optimistically, and rolls back with an inline
+    error on failure, the way presentation state does. One route for both:
+    `PUT /api/homes/:oferta/project-grades` with `entries: [{ studentId, value, visible }]`.
+    That's F22's cell shape: entries nobody sent are untouched, and `value: null` clears.
+    A bulk flip is one request and one transaction.
+  - **Clearing asks first** ("¿Borrar la nota de Ana Gómez?"), and it's the only edit
+    that does (decided 2026-11-05). A clear deletes the pair's whole history (F46), so
+    it's the one change on the tab that can't be undone.
+  - **Past years are read-only** (F35): the `PUT` takes `assertUnlocked`, the
+    gradebook's lock, so a closed year is `409 locked` and an admin's unlock is the way
+    through. The `GET` carries `locked`, and the tab renders without controls.
+  - **Mobile:** the table scrolls inside its card, with Apellido sticky.
+
+### F48 · Notas: search
+
+- [ ] **Status:** building
+- **Decision, in short:** Notas gets tic-registry's search: Buscar por Estudiante or Proyecto, with its
+  accent- and order-insensitive matcher ported with its tests, filtered in the browser.
+- **Prior art:** tic-registry's Proyectos screen: a "Buscar por" select (Nombre proyecto /
+  Nombre integrante) beside a text input, and `fold` plus a word-wise matcher in
+  `web/src/lib/text.ts`.
+- **Decision:** The same thing on Notas (decided 2026-11-05): **Buscar por** Estudiante /
+  Proyecto, and the input. Estudiante matches name and surname, Proyecto matches any of
+  the row's projects. The matcher is **ported with its tests**: accents and ñ fold, case
+  folds, and every word must appear in any order, so `munoz ana` finds "Ana Muñoz". It
+  filters in the browser, since a rotation is about 60 rows and the payload is already
+  the whole roster.
+
+### F49 · Track colours
+
+- [ ] **Status:** building
+- **Decision, in short:** tic-registry's track colours and tag tokens, ported as is, so a Rol chip matches
+  the discipline's colour on tic-registry's timetable.
+- **Prior art:** tic-registry's `subjectColor` (`web/src/lib/timetableColors.ts`), keyed by
+  track label because track labels are the seminar subject names. Its colours are
+  measured against AA, and IOT is flipped to ink.
+- **Decision:** Ported as is, together with the `--color-tag-*` and
+  `--color-subject-frontend` tokens campus doesn't have yet, so a student's Rol chip
+  wears the colour their discipline has on tic-registry's timetable. Fullstack has no
+  entry there and takes the hashed fallback, same as there. `trackLabel` already copies
+  the labels; the colour keys off its output.
+
+### F50 · Nota: the student tab
+
+- [ ] **Status:** building
+- **Decision, in short:** Nota, the student's tab: their own grade, large, with their project and Rol chip.
+  Hidden and ungraded both read "Pendiente Devolución". No rotation select, no notification;
+  staff are redirected to Notas.
+- **Decision:** A course tab, `/:year/:subject/:offering/nota`, for students enrolled in
+  the offering (`seeOwnMarks`). Decided 2026-11-05.
+
+  - **Students get a tab bar:** Presentaciones · Nota, the same row staff have.
+    Until now a student had one page and no row.
+  - **No rotation select.** A student is graded only in their own rotation, so the other
+    one's Nota would always be empty. The tab bar's Nota link always points at the
+    student's own offering, even while they browse the other rotation's Presentaciones,
+    and the local nav's per-tab memory (F47) does the rest.
+  - **What it shows:** the grade, large. Underneath, their project(s) and Rol chip (F49)
+    as context. Nothing else, since there's no comment field (F46).
+  - **Colours differ from the staff table:** every number 10–6 is **green**. Only
+    **PIA** (orange) and **DICIEMBRE** (red) are coloured differently. The staff table's
+    green-to-yellow scale (F47) helps a teacher scan a class; on a student's own page,
+    the only distinction that matters is passed or not.
+  - **Hidden and ungraded read the same: "Pendiente Devolución".** The api answers `null`
+    for both (`GET /api/homes/:oferta/project-grades/mine`, visible only), so the page
+    can't tell them apart either, and the eye can't leak.
+  - **Past years:** a student still sees their own visible grade, read-only (F35).
+  - **No notification** when a grade becomes visible. F30's bell is 2027 machinery that
+    nothing in the 2026 build uses yet. That's a separate item if anyone asks for it.
+  - **Who else:** staff opening `/nota` are redirected to Notas. A signed-in user who
+    isn't enrolled gets the student page, the way Cronograma's loader handles non-staff.
