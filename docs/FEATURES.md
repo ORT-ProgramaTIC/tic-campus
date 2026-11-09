@@ -82,7 +82,7 @@ Every item, in order.
 | F28 · Results API                                             | decided  | deferred until after launch                                 | below                                                           |
 | F29 · Revision requests                                       | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
 | F30 · In-app notifications                                    | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
-| F31 · tic-platform compliance                                 | built    | waits on D1                                                 | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
+| F31 · tic-platform compliance                                 | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
 | F32 · Public URLs                                             | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
 | F33 · Mobile-first student views                              | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
 | F34 · An admin activates offerings                            | done     |                                                             | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
