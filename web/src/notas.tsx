@@ -143,7 +143,8 @@ export function Notas() {
         // The reference's table (`../Reference/`, Payments): tall rows on
         // hairlines, the key column dark and the rest muted — under a black
         // header band, the kit's dark panels, rather than its tinted one.
-        <div className="overflow-hidden rounded-2xl border border-line bg-card">
+        // `isolate` keeps the frozen column's z-10 under the sticky app header.
+        <div className="isolate overflow-hidden rounded-2xl border border-line bg-card">
           {/* `data-scrolled` drives the frozen column's shadow, set straight
               on the element so scrolling never re-renders the table. The
               shadow is an `::after` strip: Chrome drops `box-shadow` on cells
