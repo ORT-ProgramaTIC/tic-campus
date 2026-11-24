@@ -219,6 +219,11 @@ directly. See F15 for why there is no per-offering copy of the units yet.
   from its timer sync, `sync/activities.py`; tic-host F148's groups and databases); whether
   a failed step is retried by the student, by a teacher or automatically; where "this
   activity needs a database" is declared (a run field in tic-registry seems natural).
+- **Decided (user, 2026-11-24): the steps are the run's `resources` list** (tic-registry
+  F10): an ordered list of what each group gets (a giTIC repo from a template, a tic-host
+  database, hosting), one check each in that order; a failed step stops the rest.
+  Resources are per group, never shared. Teachers choose them on a campus screen, which
+  saves the list through tic-registry's API; admins do the same in BurocraTIC.
 
 ## Group F — Gradebook (staff)
 
