@@ -224,6 +224,10 @@ directly. See F15 for why there is no per-offering copy of the units yet.
   database, hosting), one check each in that order; a failed step stops the rest.
   Resources are per group, never shared. Teachers choose them on a campus screen, which
   saves the list through tic-registry's API; admins do the same in BurocraTIC.
+- **Decided (user, 2026-11-24): tic-registry runs the steps, not campus** (tic-registry F10).
+  Campus calls its accept endpoint, then shows the group's progress as the checks. A failed
+  set-up is retried by a teacher (here) or an admin (BurocraTIC), never by the student; the
+  retry restarts from the failed step. Campus holds no credentials to giTIC or tic-host.
 
 ## Group F — Gradebook (staff)
 
