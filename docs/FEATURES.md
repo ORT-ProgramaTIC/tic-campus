@@ -104,6 +104,7 @@ Every item, in order.
 | F50 · Nota: the student tab                                   | done     | in use for 2026 Proyecto                                    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
 | F51 · URL segments come from the registry's slugs, amends F32 | decided  | waits on tic-registry F2                                    | below                                                           |
 | F52 · Activities are tic-registry's, articles stay campus's, amends F18, amends F38 | decided | waits on tic-registry F5 (campus writes through its API) | below |
+| F53 · A student accepts an activity here, and accepting sets it up step by step | decided | waits on F52, tic-registry F5 and giTIC F13 | below |
 
 ---
 
@@ -198,6 +199,26 @@ directly. See F15 for why there is no per-offering copy of the units yet.
 - **To settle while building:** the token campus writes with (tic-registry F5 leaves it open);
   whether 2026 Proyecto's grade table (F46) touches `result` at all; and what the gradebook's
   columns are ordered by once they are runs, not articles.
+
+### F53 · A student accepts an activity here, and accepting sets it up step by step
+
+- [ ] **Status:** decided (2026-11-24), unbuilt. Waits on F52, `tic-registry` F5 (the group's
+      acceptance and the student-acting token) and giTIC F13.
+- **Decision, in short:** a student accepts an activity in campus, never in BurocraTIC
+  (students have no access to it; their actions live in student-facing apps that call
+  tic-registry's API). For a team, one member's acceptance counts. Accepting records the
+  acceptance in tic-registry and **starts a set-up process**: what the activity needs is
+  created in order, one step at a time, each a check the student sees pass or fail. The
+  repo in giTIC from the run's template, and a database in tic-host if the activity needs
+  one, are the first steps named. (User, 2026-11-24.)
+- **Why:** giTIC F13: a repo exists only once its group accepts, as in GitHub Classroom,
+  instead of one per group the moment an activity is published (giTIC F6). Teachers see
+  who has not accepted (giTIC F8).
+- **To settle while building:** who runs the steps (campus calling each service, or
+  tic-registry); what each service exposes for its step (giTIC today creates repos only
+  from its timer sync, `sync/activities.py`; tic-host F148's groups and databases); whether
+  a failed step is retried by the student, by a teacher or automatically; where "this
+  activity needs a database" is declared (a run field in tic-registry seems natural).
 
 ## Group F — Gradebook (staff)
 
