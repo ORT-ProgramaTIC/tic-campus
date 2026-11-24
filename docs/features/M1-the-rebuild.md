@@ -456,6 +456,8 @@ jsonb`, `unit_order uuid[]`, `hidden_units uuid[]`, written whole by `PUT
 
 ### F18 · An activity is an article
 
+> **Amended by F52** · Activities are tic-registry's, articles stay campus's
+
 - [x] **Status:** built (slice 7)
 - **Decision:** A gradeable activity is an article whose **offering use** carries grading
   metadata. The library holds only content, so the same TP can be graded in one offering
@@ -1105,6 +1107,8 @@ worked example).
   holding its id — F9 has the full reasoning and the upgrade path.
 
 ### F38 · A result is a record of what a student did
+
+> **Amended by F52** · Activities are tic-registry's, articles stay campus's
 
 - [x] **Status:** built (slice 7)
 - **Decision:** `result` is `(student_id, offering_article_id, value, scale_level,

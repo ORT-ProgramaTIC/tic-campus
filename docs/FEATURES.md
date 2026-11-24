@@ -103,6 +103,7 @@ Every item, in order.
 | F49 · Track colours                                           | done     | in use for 2026 Proyecto                                    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
 | F50 · Nota: the student tab                                   | done     | in use for 2026 Proyecto                                    | [`docs/features/M1-the-rebuild.md`](features/M1-the-rebuild.md) |
 | F51 · URL segments come from the registry's slugs, amends F32 | decided  | waits on tic-registry F2                                    | below                                                           |
+| F52 · Activities are tic-registry's, articles stay campus's, amends F18, amends F38 | decided | waits on tic-registry F5 (campus writes through its API) | below |
 
 ---
 
@@ -161,6 +162,42 @@ directly. See F15 for why there is no per-offering copy of the units yet.
 
   **`due_at` exists since slice 7** (F18), on the offering's use of the article.
   Nothing reads it yet; F16's calendar is what it is for.
+
+### F52 · Activities are tic-registry's, articles stay campus's, amends F18, amends F38
+
+- [ ] **Status:** decided (2026-11-24), unbuilt. Waits on `tic-registry` F5, the API campus
+      writes activities through.
+- **Decision, in short:** an activity and an article are separate things. **Every activity is
+  keyed by tic-registry** (its run for the offering), created or picked through its API, and
+  its deadline is the run's `due_at`. Campus keeps, per run it grades, only what grading
+  needs (group, term, value type, scale, published-at); results hang off that. **An article
+  is campus's alone**: ungraded content, no repo, no MEV. It may point at an activity as
+  material for it (a statement, hints, a rubric), which is how its page still shows the
+  student's deadline and result.
+- **Why:** F18 made an activity an article's offering use, when campus was the only place
+  that defined one. tic-registry is now that place (its F1): giTIC's repo per group and
+  `entrega` tag (giTIC F6) and tic-host's groups (tic-host F148) hang off its runs, and MEV
+  expected campus to grade around them. Keeping F18's shape would give one activity two
+  identities, the article's use and the run. Feedback goes with the mark (`result.feedback`,
+  F38; giTIC F6 holds none), so a mark has to reach the run to reach the repo.
+- **Decision (user, 2026-11-24), Claude's questions:**
+  1. **Every activity is tic-registry's**, not an optional link.
+  2. **tic-registry's `due_at` wins.** Campus shows the run's deadline and edits it through
+     tic-registry; F18's `offering_article.due_at` stops being a deadline.
+  3. **Activities and articles are separate.** The pointer runs from the article to the
+     activity: an activity may have no article (a class check, an oral exam, a TP whose
+     statement is its template repo) or several.
+- **A consequence, not a case anyone named (user: "I don't see where it could happen, but I
+  like the separation"):** a tic-registry run campus does not grade has no grading row, and
+  campus can still list it on the offering's page without a mark.
+- **What it amends:** F18's six columns leave `offering_article` (`due_at` goes to
+  tic-registry, the other five to the grading row), and F38's `result` is keyed by the
+  activity, not by `offering_article_id`. F18's "creating an activity and writing its
+  statement is one act" becomes a screen: one form creates the run in tic-registry and the
+  statement article here. Before the 2027 launch, while there is little data to move.
+- **To settle while building:** the token campus writes with (tic-registry F5 leaves it open);
+  whether 2026 Proyecto's grade table (F46) touches `result` at all; and what the gradebook's
+  columns are ordered by once they are runs, not articles.
 
 ## Group F — Gradebook (staff)
 
